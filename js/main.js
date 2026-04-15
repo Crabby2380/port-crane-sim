@@ -89,7 +89,43 @@ document.getElementById('help-close').addEventListener('click', () => helpPanel.
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function groundLevelAt() { return 0; }
+// Trolley sits at world Y=30 in the crane group; spreader hangs below it.
+// spreaderWorldY = 29.6 - hoistHeight  (trolley Y 30, minus hoistHeight, minus 0.4 offset)
+const TROLLEY_WORLD_Y = 29.6;
+
+// Returns the highest surface Y directly beneath the given world X,Z.
+// Checks ground, ship decks, and the tops of all stationary containers.
+function getFloorBelow(worldX, worldZ, skipContainerId = null) {
+  let floor = 0; // quayside / open ground
+
+  // Container tops
+  for (const c of allContainers) {
+    if (c.userData.attached) continue;              // skip held container
+    if (fallingContainers.has(c)) continue;         // skip mid-air containers
+    if (skipContainerId !== null && c.userData.containerId === skipContainerId) continue;
+
+    const sz = containerSize(c.userData.is40ft);
+    const dx = Math.abs(c.position.x - worldX);
+    const dz = Math.abs(c.position.z - worldZ);
+
+    // Horizontal footprint check with small tolerance
+    if (dx < sz.d / 2 + 0.4 && dz < sz.w / 2 + 0.4) {
+      floor = Math.max(floor, c.position.y + sz.h / 2);
+    }
+  }
+
+  // Ship decks
+  for (const ship of ships) {
+    const sp = new THREE.Vector3();
+    ship.mesh.getWorldPosition(sp);
+    if (Math.abs(worldX - sp.x) < ship.def.length / 2 &&
+        Math.abs(worldZ - sp.z) < ship.def.beam / 2) {
+      floor = Math.max(floor, 0.4); // deck surface
+    }
+  }
+
+  return floor;
+}
 
 function findNearestContainer(spreaderPos) {
   let best = null, bestDist = 4.0;
@@ -276,6 +312,31 @@ function loop() {
 
   // Crane movement
   crane.update(dt, controls, physics);
+
+  // ── Collision: stop spreader/container passing through surfaces ────────────
+  {
+    const sp = crane.getSpreaderWorldPos();
+    let minSpreaderY;
+
+    if (heldContainer) {
+      // Container hangs from spreader — its bottom must stay above the floor
+      const sz = containerSize(heldContainer.userData.is40ft);
+      const floor = getFloorBelow(sp.x, sp.z, heldContainer.userData.containerId);
+      minSpreaderY = floor + sz.h + 0.05;  // spreader must be one container-height above floor
+    } else {
+      // Bare spreader — its underside must not penetrate surfaces
+      const floor = getFloorBelow(sp.x, sp.z);
+      minSpreaderY = floor + 0.2;           // 0.2m clearance under spreader bar
+    }
+
+    // spreaderWorldY = TROLLEY_WORLD_Y - hoistHeight
+    // To keep spreaderY >= minSpreaderY:  hoistHeight <= TROLLEY_WORLD_Y - minSpreaderY
+    const maxHoist = TROLLEY_WORLD_Y - minSpreaderY;
+    if (crane.hoistHeight > maxHoist) {
+      crane.hoistHeight = maxHoist;
+      crane.refreshSpreaderPos(physics);    // re-apply transforms immediately
+    }
+  }
 
   // Camera
   controls.consumeMouseDelta();

@@ -185,6 +185,17 @@ export class Crane {
     this._statusLight.material.emissive.set(locked ? 0xffcc00 : 0x00ff44);
   }
 
+  // Re-apply spreader/cable transforms after an external hoistHeight change (e.g. collision clamp)
+  refreshSpreaderPos(physicsWorld) {
+    const cableLen = this.hoistHeight;
+    this._cableMesh.scale.y = cableLen;
+    this._cableMesh.position.y = -cableLen / 2;
+    const offset = physicsWorld.getLoadOffset();
+    this._spreaderGroup.position.set(offset.x, -cableLen - 0.4, offset.z);
+    this._spreaderGroup.rotation.x = physicsWorld.pendulum.angleX * 0.3;
+    this._spreaderGroup.rotation.z = physicsWorld.pendulum.angleZ * 0.3;
+  }
+
   // ── Camera position (in crane cabin) ──────────────────────────────────────
   getCameraPosition() {
     const p = new THREE.Vector3();
