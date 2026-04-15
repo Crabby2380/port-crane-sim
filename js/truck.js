@@ -131,38 +131,45 @@ export class TruckManager {
     return group;
   }
 
-  // ── Yard bay number markings ──────────────────────────────────────────────
+  // ── Truck bay ground markings ─────────────────────────────────────────────
   _buildBayMarkings() {
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+    // Use thin BoxGeometry strips instead of LineLoop — no flickering at distance.
+    // Raise to Y=0.15 + polygonOffset to prevent z-fighting with yard surface.
+    const Y   = 0.15;
+    const PO  = { polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 };
+    const stripMat = new THREE.MeshBasicMaterial({ color: 0xffdd00, ...PO });
+
     for (let i = 0; i < BAYS.length; i++) {
-      const bay = BAYS[i];
-      // Bay outline rectangle
-      const frame = new THREE.LineLoop(
-        new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(-5.5, 0.05, -4),
-          new THREE.Vector3( 5.5, 0.05, -4),
-          new THREE.Vector3( 5.5, 0.05,  4),
-          new THREE.Vector3(-5.5, 0.05,  4),
-        ]),
-        new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 })
-      );
-      frame.position.set(bay.x, 0, bay.z);
-      this.scene.add(frame);
+      const { x, z } = BAYS[i];
+      const W = 11, D = 9; // bay footprint
+
+      // Four border strips (top/bottom/left/right edges of bay rectangle)
+      const strips = [
+        [W, 0.12, x,     Y, z - D/2],  // front edge
+        [W, 0.12, x,     Y, z + D/2],  // back edge
+        [0.12, D, x - W/2, Y, z],       // left edge
+        [0.12, D, x + W/2, Y, z],       // right edge
+      ];
+      for (const [sw, sd, sx, sy, sz] of strips) {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(sw, 0.05, sd), stripMat);
+        mesh.position.set(sx, sy, sz);
+        this.scene.add(mesh);
+      }
 
       // Bay label on ground
       const canvas = document.createElement('canvas');
-      canvas.width = 256; canvas.height = 128;
+      canvas.width = 256; canvas.height = 96;
       const ctx = canvas.getContext('2d');
-      ctx.fillStyle = 'rgba(255,220,0,0.85)';
-      ctx.font = 'bold 56px monospace';
-      ctx.fillText(`TRUCK ${i + 1}`, 10, 80);
+      ctx.fillStyle = 'rgba(255,220,0,0.9)';
+      ctx.font = 'bold 42px monospace';
+      ctx.fillText(`TRUCK ${i + 1}`, 8, 64);
       const tex = new THREE.CanvasTexture(canvas);
       const label = new THREE.Mesh(
-        new THREE.PlaneGeometry(8, 4),
-        new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })
+        new THREE.PlaneGeometry(8, 3),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, depthWrite: false, ...PO })
       );
       label.rotation.x = -Math.PI / 2;
-      label.position.set(bay.x, 0.06, bay.z + 2);
+      label.position.set(x, Y + 0.01, z);
       this.scene.add(label);
     }
   }

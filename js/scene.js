@@ -84,22 +84,33 @@ export function buildScene(renderer) {
   return scene;
 }
 
+// Shared material factory for ground decals — polygonOffset prevents z-fighting
+function decalMat(opts) {
+  return Object.assign(
+    new THREE.MeshBasicMaterial({ ...opts, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+    {}
+  );
+}
+
 function addYardMarkings(scene) {
-  const lineMat = new THREE.MeshStandardMaterial({ color: 0xffdd00, roughness: 1 });
+  // Raised slightly above ground (0.12m) + polygonOffset = no z-fighting
+  const DECAL_Y = 0.12;
+  const lineMat = new THREE.MeshStandardMaterial({
+    color: 0xffdd00, roughness: 1,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
 
   // Column dividers
   for (let x = -120; x <= 120; x += 30) {
-    const lineGeo = new THREE.BoxGeometry(0.3, 0.05, 80);
-    const line = new THREE.Mesh(lineGeo, lineMat);
-    line.position.set(x, 0.02, 60);
+    const line = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.05, 80), lineMat);
+    line.position.set(x, DECAL_Y, 60);
     scene.add(line);
   }
 
   // Row dividers
   for (let z = 22; z <= 98; z += 19) {
-    const lineGeo = new THREE.BoxGeometry(240, 0.05, 0.3);
-    const line = new THREE.Mesh(lineGeo, lineMat);
-    line.position.set(0, 0.02, z);
+    const line = new THREE.Mesh(new THREE.BoxGeometry(240, 0.05, 0.3), lineMat);
+    line.position.set(0, DECAL_Y, z);
     scene.add(line);
   }
 
@@ -114,16 +125,16 @@ function addYardMarkings(scene) {
       const canvas = document.createElement('canvas');
       canvas.width = 128; canvas.height = 64;
       const ctx = canvas.getContext('2d');
-      ctx.fillStyle = 'rgba(255,220,0,0.7)';
+      ctx.fillStyle = 'rgba(255,220,0,0.85)';
       ctx.font = 'bold 22px monospace';
       ctx.fillText(`B${col + 1}-R${row + 1}`, 8, 42);
       const tex = new THREE.CanvasTexture(canvas);
       const label = new THREE.Mesh(
         new THREE.PlaneGeometry(6, 3),
-        new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })
+        decalMat({ map: tex, transparent: true, side: THREE.DoubleSide })
       );
       label.rotation.x = -Math.PI / 2;
-      label.position.set(cx, 0.04, cz);
+      label.position.set(cx, DECAL_Y + 0.01, cz);
       scene.add(label);
 
       // Corner posts
@@ -138,7 +149,7 @@ function addYardMarkings(scene) {
   }
 
   // "CONTAINER YARD" sign
-  addGroundSign(scene, 0, 0.05, 22, 'CONTAINER YARD', '#fff', 40);
+  addGroundSign(scene, 0, 0.14, 22, 'CONTAINER YARD', '#fff', 40);
 }
 
 function addGroundSign(scene, x, y, z, text, color, fontSize) {
@@ -151,7 +162,10 @@ function addGroundSign(scene, x, y, z, text, color, fontSize) {
   const tex = new THREE.CanvasTexture(canvas);
   const label = new THREE.Mesh(
     new THREE.PlaneGeometry(24, 3),
-    new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })
+    new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    })
   );
   label.rotation.x = -Math.PI / 2;
   label.position.set(x, y, z);

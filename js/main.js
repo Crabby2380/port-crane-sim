@@ -368,6 +368,9 @@ function loop() {
   // Trucks
   trucks.update(dt);
 
+  // Ambient sound tick
+  sounds.tick(dt);
+
   // Motor sounds
   const traveling  = controls.isDown('KeyA') || controls.isDown('KeyD');
   const trolleying = controls.isDown('KeyW') || controls.isDown('KeyS');
