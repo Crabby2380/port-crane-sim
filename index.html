@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Port Crane Simulator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="loading-screen">
+    <div class="loading-inner">
+      <h1>PORT CRANE SIMULATOR</h1>
+      <p>Loading port...</p>
+      <div class="loading-bar"><div class="loading-fill"></div></div>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="hud-top-left">
+      <div class="hud-panel">
+        <div class="hud-label">CRANE POSITION</div>
+        <div id="crane-pos">0m</div>
+      </div>
+      <div class="hud-panel">
+        <div class="hud-label">TROLLEY</div>
+        <div id="trolley-pos">0m</div>
+      </div>
+      <div class="hud-panel">
+        <div class="hud-label">HOIST</div>
+        <div id="hoist-height">0m</div>
+      </div>
+    </div>
+
+    <div id="hud-top-right">
+      <div class="hud-panel">
+        <div class="hud-label">SCORE</div>
+        <div id="score-display">0</div>
+      </div>
+      <div class="hud-panel">
+        <div class="hud-label">CONTAINERS</div>
+        <div id="containers-remaining">0 / 0</div>
+      </div>
+    </div>
+
+    <div id="hud-bottom-left">
+      <div class="hud-panel" id="spreader-status">
+        <div class="hud-label">SPREADER</div>
+        <div id="spreader-state">FREE</div>
+      </div>
+      <div class="hud-panel" id="swing-panel">
+        <div class="hud-label">SWING</div>
+        <div id="swing-indicator">
+          <div class="swing-bar"><div id="swing-needle"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="manifest-panel">
+      <div class="hud-label">MANIFEST</div>
+      <div id="manifest-list"></div>
+    </div>
+
+    <div id="score-popup" class="hidden"></div>
+    <div id="crosshair"></div>
+  </div>
+
+  <div id="start-overlay">
+    <div class="overlay-inner">
+      <h1>PORT CRANE SIMULATOR</h1>
+      <div class="controls-grid">
+        <div class="ctrl-group">
+          <div class="ctrl-title">CRANE TRAVEL</div>
+          <div class="ctrl-row"><kbd>A</kbd><kbd>D</kbd> Move along quayside</div>
+        </div>
+        <div class="ctrl-group">
+          <div class="ctrl-title">TROLLEY</div>
+          <div class="ctrl-row"><kbd>W</kbd><kbd>S</kbd> Move over ship / yard</div>
+        </div>
+        <div class="ctrl-group">
+          <div class="ctrl-title">HOIST</div>
+          <div class="ctrl-row"><kbd>Q</kbd> Lower &nbsp; <kbd>E</kbd> Raise</div>
+        </div>
+        <div class="ctrl-group">
+          <div class="ctrl-title">CAMERA</div>
+          <div class="ctrl-row">Mouse drag to look</div>
+        </div>
+        <div class="ctrl-group">
+          <div class="ctrl-title">ATTACH / RELEASE</div>
+          <div class="ctrl-row"><kbd>Space</kbd> Lock / release spreader</div>
+        </div>
+      </div>
+      <button id="start-btn">BEGIN OPERATIONS</button>
+    </div>
+  </div>
+
+  <canvas id="game-canvas"></canvas>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
