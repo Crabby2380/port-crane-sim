@@ -9,7 +9,8 @@ export class SoundSystem {
     this._motors = {};
     this._speechQueue = [];
     this._speechBusy  = false;
-    this._ambientTimer = 0;
+    this._ambientTimer  = 0;
+    this._seagullTimer  = 4 + Math.random() * 6; // first call in 4-10s
   }
 
   init() {
@@ -210,18 +211,30 @@ export class SoundSystem {
   // ── Periodic ambience tick (call from game loop) ──────────────────────────
   tick(dt) {
     if (!this.enabled) return;
+
+    // Seagulls — frequent, independent timer (every 6–18s)
+    this._seagullTimer -= dt;
+    if (this._seagullTimer <= 0) {
+      this._seagullTimer = 6 + Math.random() * 12;
+      // 1–3 gulls calling in quick succession
+      const count = 1 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < count; i++) {
+        setTimeout(() => { if (this.enabled) this._seagullCall(); }, i * 380);
+      }
+    }
+
+    // Other ambient events (ship horn, machinery, worker voices)
     this._ambientTimer -= dt;
     if (this._ambientTimer <= 0) {
-      this._ambientTimer = 12 + Math.random() * 18; // every 12–30s
+      this._ambientTimer = 14 + Math.random() * 20;
       this._randomAmbientEvent();
     }
   }
 
   _randomAmbientEvent() {
     const r = Math.random();
-    if (r < 0.3)      this._seagullCall();
-    else if (r < 0.55) this._distantShipHorn();
-    else if (r < 0.75) this._backgroundMachinery();
+    if      (r < 0.35) this._distantShipHorn();
+    else if (r < 0.65) this._backgroundMachinery();
     else               this._dockWorkerCall(['Stand clear!', 'Coming through!', 'All clear!', 'Watch your back!', 'Lift ready!', 'Lower away!']);
   }
 

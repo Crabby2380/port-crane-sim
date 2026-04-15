@@ -41,11 +41,11 @@ export function buildScene(renderer) {
   // Gentle wave animation data stored on mesh
   water.userData.isWater = true;
 
-  // ── Quayside / Apron ──────────────────────────────────────
-  const apronGeo = new THREE.BoxGeometry(280, 1, 40);
+  // ── Quayside / Apron (Z: -2 → 20 — stops before yard starts) ─────────────
+  const apronGeo = new THREE.BoxGeometry(280, 1, 22);
   const apronMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.9 });
   const apron = new THREE.Mesh(apronGeo, apronMat);
-  apron.position.set(0, -0.5, 18);
+  apron.position.set(0, -0.5, 9);   // centre Z=9, spans Z=-2 to Z=20
   apron.receiveShadow = true;
   scene.add(apron);
 
@@ -57,11 +57,11 @@ export function buildScene(renderer) {
   wall.castShadow = true;
   scene.add(wall);
 
-  // ── Container Yard ────────────────────────────────────────
-  const yardGeo = new THREE.BoxGeometry(280, 0.5, 80);
+  // ── Container Yard (Z: 20 → 108 — starts exactly where apron ends) ────────
+  const yardGeo = new THREE.BoxGeometry(280, 0.5, 88);
   const yardMat = new THREE.MeshStandardMaterial({ color: 0x6b6b60, roughness: 0.95 });
   const yard = new THREE.Mesh(yardGeo, yardMat);
-  yard.position.set(0, -0.25, 60);
+  yard.position.set(0, -0.25, 64);  // centre Z=64, spans Z=20 to Z=108
   yard.receiveShadow = true;
   scene.add(yard);
 

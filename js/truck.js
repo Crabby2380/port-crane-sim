@@ -117,14 +117,16 @@ export class TruckManager {
     group.add(plate);
 
     group.position.set(bay.x, 0, bay.z);
-    group.rotation.y = Math.PI; // facing to leave rightward
+    // rotation.y = π/2 → cab faces +Z (into the yard background, away from quay)
+    // Trailer end faces the crane for loading
+    group.rotation.y = Math.PI / 2;
     group.userData = {
       bay,
       loaded: false,
       container: null,
       departing: false,
       departDelay: 0,
-      initialX: bay.x,
+      initialZ: bay.z,
     };
 
     this.scene.add(group);
@@ -208,16 +210,21 @@ export class TruckManager {
       }
 
       if (t.userData.departing) {
-        // Drive off to the right (negative X since truck faces that way)
-        t.position.x -= 14 * dt;
+        // Drive straight back into the yard background (+Z), each truck in its own lane
+        t.position.z += 14 * dt;
         if (t.userData.container) {
           const sz = containerSize(t.userData.container.userData.is40ft);
-          t.userData.container.position.set(t.position.x, 1.4 + sz.h / 2, t.position.z);
+          // Container stays on the trailer flatbed — local offset (1.5, 0, 0) rotated by π/2 = (0, 0, -1.5) world offset
+          t.userData.container.position.set(
+            t.position.x,
+            1.4 + sz.h / 2,
+            t.position.z - 1.5
+          );
         }
 
-        if (t.position.x < -220) {
-          // Reset
-          t.position.x = t.userData.initialX;
+        if (t.position.z > 240) {
+          // Reset back to bay
+          t.position.z        = t.userData.initialZ;
           t.userData.departing  = false;
           t.userData.loaded     = false;
           t.userData.departDelay= 0;
