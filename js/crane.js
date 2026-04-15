@@ -107,8 +107,6 @@ export class Crane {
       this._group.add(g);
     }
 
-    // ── Cabin interior controls ────────────────────────────────
-    this._buildCabinInterior();
 
     // ── Trolley ──────────────────────────────────────────────
     const trolleyGeo = new THREE.BoxGeometry(2.2, 0.8, 2.2);
@@ -179,113 +177,7 @@ export class Crane {
     this._spreaderGroup.add(this._statusLight);
   }
 
-  _buildCabinInterior() {
-    const panelMat  = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
-    const leverMat  = new THREE.MeshStandardMaterial({ color: 0xcc3300, metalness: 0.5 });
-    const knobMat   = new THREE.MeshStandardMaterial({ color: 0xffcc00, metalness: 0.4 });
-    const screenMat = new THREE.MeshStandardMaterial({ color: 0x003311, emissive: 0x002208, emissiveIntensity: 1 });
 
-    // Dashboard panel
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.6, 0.15), panelMat);
-    panel.position.set(0, 27.15, 3.4);
-    panel.rotation.x = -0.35;
-    this._group.add(panel);
-
-    // Small instrument screen (green glow)
-    const screen = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.35, 0.05), screenMat);
-    screen.position.set(0.4, 27.2, 3.47);
-    screen.rotation.x = -0.35;
-    this._group.add(screen);
-
-    // Lever bases — 3 levers (travel, trolley, hoist)
-    const leverBase = new THREE.CylinderGeometry(0.12, 0.14, 0.18, 8);
-    const leverStick = new THREE.CylinderGeometry(0.04, 0.04, 0.42, 6);
-    const leverTop   = new THREE.SphereGeometry(0.09, 8, 8);
-
-    const leverDefs = [
-      { x: -0.75, label: 'TRAVEL' },
-      { x:  0.0,  label: 'TROLLEY' },
-      { x:  0.75, label: 'HOIST' },
-    ];
-
-    this._levers = [];
-    for (const ld of leverDefs) {
-      const base = new THREE.Mesh(leverBase, panelMat);
-      base.position.set(ld.x, 27.05, 3.52);
-      this._group.add(base);
-
-      const stick = new THREE.Mesh(leverStick, leverMat);
-      stick.position.set(ld.x, 27.32, 3.52);
-      this._group.add(stick);
-
-      const top = new THREE.Mesh(leverTop, knobMat);
-      top.position.set(ld.x, 27.55, 3.52);
-      this._group.add(top);
-
-      this._levers.push({ stick, top });
-    }
-
-    // Armrests
-    const armMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 1 });
-    for (const x of [-0.95, 0.95]) {
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.6), armMat);
-      arm.position.set(x, 26.95, 3.3);
-      this._group.add(arm);
-    }
-
-    // Operator seat back (visible from behind)
-    const seatMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.9 });
-    const seatBack = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 0.12), seatMat);
-    seatBack.position.set(0, 27.0, 3.1);
-    this._group.add(seatBack);
-
-    // Overhead warning light (flashes when spreader locked)
-    const warnGeo  = new THREE.SphereGeometry(0.12, 8, 8);
-    this._warnLight = new THREE.Mesh(warnGeo,
-      new THREE.MeshStandardMaterial({ color: 0x330000, emissive: 0x000000, emissiveIntensity: 0 })
-    );
-    this._warnLight.position.set(0, 29.1, 3.2);
-    this._group.add(this._warnLight);
-
-    // Control labels (canvas texture on dashboard)
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = 512; labelCanvas.height = 64;
-    const lc = labelCanvas.getContext('2d');
-    lc.fillStyle = '#00ff88';
-    lc.font = '18px monospace';
-    lc.fillText('A/D  TRAVEL', 20, 44);
-    lc.fillText('W/S  TROLLEY', 185, 44);
-    lc.fillText('Q/E  HOIST', 360, 44);
-    const labelTex = new THREE.CanvasTexture(labelCanvas);
-    const labelMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(2.2, 0.28),
-      new THREE.MeshBasicMaterial({ map: labelTex, transparent: true })
-    );
-    labelMesh.position.set(0, 26.88, 3.48);
-    labelMesh.rotation.x = -0.35;
-    this._group.add(labelMesh);
-  }
-
-  // Animate levers based on active inputs & warning light
-  _updateCabinControls(traveling, trolleying, hoisting, spreaderLocked, t) {
-    if (!this._levers) return;
-    const [travelLever, trolleyLever, hoistLever] = this._levers;
-
-    travelLever.stick.rotation.x  = traveling  ? 0.3 : 0;
-    trolleyLever.stick.rotation.x = trolleying ? 0.3 : 0;
-    hoistLever.stick.rotation.x   = hoisting   ? 0.3 : 0;
-
-    // Warning light pulses when locked
-    if (spreaderLocked) {
-      const pulse = (Math.sin(t * 8) + 1) / 2;
-      this._warnLight.material.color.setRGB(pulse * 0.8, 0, 0);
-      this._warnLight.material.emissive.setRGB(pulse * 0.6, 0, 0);
-      this._warnLight.material.emissiveIntensity = pulse;
-    } else {
-      this._warnLight.material.emissiveIntensity = 0;
-      this._warnLight.material.color.set(0x330000);
-    }
-  }
 
   setSpreaderLocked(locked) {
     this._spreaderLocked = locked;
@@ -334,11 +226,6 @@ export class Crane {
     this._spreaderGroup.rotation.x = physicsWorld.pendulum.angleX * 0.3;
     this._spreaderGroup.rotation.z = physicsWorld.pendulum.angleZ * 0.3;
 
-    // Animate cabin controls
-    const traveling  = controls.isDown('KeyA') || controls.isDown('KeyD');
-    const trolleying = controls.isDown('KeyW') || controls.isDown('KeyS');
-    const hoisting   = controls.isDown('KeyQ') || controls.isDown('KeyE');
-    this._updateCabinControls(traveling, trolleying, hoisting, this._spreaderLocked, performance.now() * 0.001);
   }
 
   // World position of the spreader (for pickup/placement detection)

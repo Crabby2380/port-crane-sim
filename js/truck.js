@@ -3,14 +3,14 @@ import { containerSize } from './container.js';
 
 const TRUCK_COLORS = [0xcc3300, 0x1144aa, 0x228833, 0xcc8800, 0x663388];
 
-// Truck bay positions — parked at the back of the container yard
+// Truck bay positions — within crane trolley reach (trolley max Z ~40)
 const BAYS = [
-  { x: -100, z: 85 },
-  { x:  -65, z: 85 },
-  { x:  -30, z: 85 },
-  { x:    5, z: 85 },
-  { x:   40, z: 85 },
-  { x:   75, z: 85 },
+  { x: -100, z: 36 },
+  { x:  -65, z: 36 },
+  { x:  -30, z: 36 },
+  { x:    5, z: 36 },
+  { x:   40, z: 36 },
+  { x:   75, z: 36 },
 ];
 
 export class TruckManager {
