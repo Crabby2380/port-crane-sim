@@ -126,6 +126,69 @@ body {
 }
 #score-popup.hidden { display: none; }
 
+/* ── Help button ── */
+#help-btn {
+  position: absolute;
+  bottom: 16px; right: 16px;
+  width: 36px; height: 36px;
+  background: rgba(0,20,10,0.8);
+  border: 1px solid rgba(0,255,136,0.4);
+  border-radius: 50%;
+  color: #00ff88;
+  font-family: inherit;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+  pointer-events: all;
+  transition: background 0.2s;
+}
+#help-btn:hover { background: rgba(0,255,136,0.2); }
+
+/* ── Help panel ── */
+#help-panel {
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(5,15,10,0.97);
+  border: 1px solid rgba(0,255,136,0.35);
+  border-radius: 8px;
+  padding: 24px 28px;
+  z-index: 40;
+  min-width: 380px;
+}
+#help-panel.hidden { display: none; }
+.help-title {
+  font-size: 1rem;
+  letter-spacing: 0.25em;
+  color: #00ff88;
+  margin-bottom: 16px;
+}
+.help-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+.help-table tr { border-bottom: 1px solid rgba(0,255,136,0.08); }
+.help-table td { padding: 6px 4px; font-size: 0.82rem; color: #aaddcc; }
+.help-table td:first-child { white-space: nowrap; padding-right: 20px; }
+.help-tips { margin-bottom: 16px; }
+.help-tip {
+  font-size: 0.72rem;
+  color: #557;
+  margin-bottom: 4px;
+  padding-left: 8px;
+  border-left: 2px solid rgba(0,255,136,0.2);
+}
+#help-close {
+  background: transparent;
+  border: 1px solid rgba(0,255,136,0.4);
+  color: #00ff88;
+  font-family: inherit;
+  font-size: 0.8rem;
+  letter-spacing: 0.15em;
+  padding: 8px 20px;
+  cursor: pointer;
+  border-radius: 3px;
+  width: 100%;
+}
+#help-close:hover { background: rgba(0,255,136,0.1); }
+
 /* ── Start overlay ── */
 #start-overlay {
   position: fixed; inset: 0;

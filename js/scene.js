@@ -86,12 +86,76 @@ export function buildScene(renderer) {
 
 function addYardMarkings(scene) {
   const lineMat = new THREE.MeshStandardMaterial({ color: 0xffdd00, roughness: 1 });
+
+  // Column dividers
   for (let x = -120; x <= 120; x += 30) {
     const lineGeo = new THREE.BoxGeometry(0.3, 0.05, 80);
     const line = new THREE.Mesh(lineGeo, lineMat);
     line.position.set(x, 0.02, 60);
     scene.add(line);
   }
+
+  // Row dividers
+  for (let z = 22; z <= 98; z += 19) {
+    const lineGeo = new THREE.BoxGeometry(240, 0.05, 0.3);
+    const line = new THREE.Mesh(lineGeo, lineMat);
+    line.position.set(0, 0.02, z);
+    scene.add(line);
+  }
+
+  // Bay number labels (canvas textures on ground)
+  const cols = 8, rows = 4;
+  for (let col = 0; col < cols; col++) {
+    for (let row = 0; row < rows; row++) {
+      const cx = -105 + col * 30;
+      const cz = 31 + row * 19;
+
+      // Ground label
+      const canvas = document.createElement('canvas');
+      canvas.width = 128; canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(255,220,0,0.7)';
+      ctx.font = 'bold 22px monospace';
+      ctx.fillText(`B${col + 1}-R${row + 1}`, 8, 42);
+      const tex = new THREE.CanvasTexture(canvas);
+      const label = new THREE.Mesh(
+        new THREE.PlaneGeometry(6, 3),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })
+      );
+      label.rotation.x = -Math.PI / 2;
+      label.position.set(cx, 0.04, cz);
+      scene.add(label);
+
+      // Corner posts
+      const postGeo = new THREE.BoxGeometry(0.2, 0.6, 0.2);
+      const postMat = new THREE.MeshStandardMaterial({ color: 0xffdd00 });
+      for (const [px, pz] of [[-12, -8], [12, -8], [-12, 8], [12, 8]]) {
+        const post = new THREE.Mesh(postGeo, postMat);
+        post.position.set(cx + px, 0.3, cz + pz);
+        scene.add(post);
+      }
+    }
+  }
+
+  // "CONTAINER YARD" sign
+  addGroundSign(scene, 0, 0.05, 22, 'CONTAINER YARD', '#fff', 40);
+}
+
+function addGroundSign(scene, x, y, z, text, color, fontSize) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = color;
+  ctx.font = `bold ${fontSize}px monospace`;
+  ctx.fillText(text, 8, 50);
+  const tex = new THREE.CanvasTexture(canvas);
+  const label = new THREE.Mesh(
+    new THREE.PlaneGeometry(24, 3),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide })
+  );
+  label.rotation.x = -Math.PI / 2;
+  label.position.set(x, y, z);
+  scene.add(label);
 }
 
 function addBackgroundElements(scene) {
