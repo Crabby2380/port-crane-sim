@@ -56,12 +56,12 @@ const ui = new UI();
 ui.setTotal(allContainers.length);
 
 // ── Game state ────────────────────────────────────────────────────────────────
-let heldContainer = null;         // THREE.Group currently attached to spreader
-let spaceWasDown  = false;        // edge detection for spacebar
+let heldContainer = null;
+let spaceWasDown  = false;
 let gameStarted   = false;
 
-// Raycaster for proximity detection
-const raycaster = new THREE.Raycaster();
+// Falling containers: Map of container → { vy }
+const fallingContainers = new Map();
 
 // ── Loading screen ────────────────────────────────────────────────────────────
 function fakeLoad() {
@@ -89,13 +89,24 @@ document.getElementById('start-btn').addEventListener('click', () => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// Find the nearest container below/near the spreader (within ~3m)
+// Ground level at a given world X/Z position
+function groundLevelAt(x, z) {
+  // Quayside apron: Z 0..36
+  // Yard: Z 20..100
+  // Ship deck: roughly Z -22..-2 (varies by ship)
+  // Default to 0 (quay surface)
+  return 0;
+}
+
+// Find nearest pickable container near spreader (within ~4m)
 function findNearestContainer(spreaderPos) {
   let best = null;
-  let bestDist = 3.5;
+  let bestDist = 4.0;
   for (const c of allContainers) {
-    if (c.userData.placed || c.userData.attached) continue;
-    const topY = c.position.y + containerSize(c.userData.is40ft).h / 2;
+    // Skip if locked in a ship slot, currently held, or still falling
+    if (c.userData.inShipSlot || c.userData.attached || fallingContainers.has(c)) continue;
+    const sz = containerSize(c.userData.is40ft);
+    const topY = c.position.y + sz.h / 2;
     const dx = Math.abs(c.position.x - spreaderPos.x);
     const dz = Math.abs(c.position.z - spreaderPos.z);
     const dy = Math.abs(topY - spreaderPos.y);
@@ -141,20 +152,45 @@ function findNearestShipSlot(worldPos) {
   return best;
 }
 
+// Remove container from whichever yard cell it was in
+function removeFromYard(c) {
+  for (const cell of yardGrid) {
+    const idx = cell.stack.indexOf(c.userData.containerId);
+    if (idx !== -1) {
+      cell.stack.splice(idx, 1);
+      // Drop any containers above it down one tier
+      for (const otherId of cell.stack.slice(idx)) {
+        const other = allContainers.find(o => o.userData.containerId === otherId);
+        if (other) {
+          const sz = containerSize(other.userData.is40ft);
+          const newStackIdx = cell.stack.indexOf(otherId);
+          other.position.y = sz.h / 2 + newStackIdx * sz.h;
+        }
+      }
+      break;
+    }
+  }
+}
+
 // Attach container to spreader
 function attachContainer(c) {
+  // If it was in the yard, unregister it
+  if (c.userData.inYard) {
+    removeFromYard(c);
+    c.userData.inYard = false;
+  }
+
   c.userData.attached = true;
   physics.isLoaded = true;
   heldContainer = c;
   ui.updateSpreader(true);
   crane.setSpreaderLocked(true);
 
-  const swingScore = physics.getSwingScore();
-  const pts = scorePickup(swingScore);
+  const pts = scorePickup(physics.getSwingScore());
   ui.addScore(pts, 'PICKUP');
 }
 
-// Release container — place on ship slot, yard cell, or drop in place
+// Release container — snap to ship slot, yard cell, or drop with gravity
 function releaseContainer(spreaderPos) {
   if (!heldContainer) return;
 
@@ -164,6 +200,7 @@ function releaseContainer(spreaderPos) {
   heldContainer = null;
   ui.updateSpreader(false);
   crane.setSpreaderLocked(false);
+  c.rotation.set(0, 0, 0);
 
   const swingScore = physics.getSwingScore();
 
@@ -173,10 +210,9 @@ function releaseContainer(spreaderPos) {
     const { slot, ship, wx, wy, wz } = slotHit;
     const sz = containerSize(c.userData.is40ft);
     c.position.set(wx, wy + sz.h / 2, wz);
-    c.rotation.set(0, 0, 0);
     slot.occupied = true;
     slot.containerId = c.userData.containerId;
-    c.userData.placed = true;
+    c.userData.inShipSlot = true;
     c.userData.onShip = ship.def.id;
 
     const pts = scorePlacement(swingScore, true);
@@ -190,25 +226,47 @@ function releaseContainer(spreaderPos) {
   // Try yard cell
   const cell = findNearestYardCell(spreaderPos);
   if (cell) {
-    const targetPos = yardSlotWorldPos(cell, cell.stack.length);
-    const sz = containerSize(c.userData.is40ft);
-    c.position.set(targetPos.x, targetPos.y, targetPos.z);
-    c.rotation.set(0, 0, 0);
+    const stackIdx = cell.stack.length;
+    const targetPos = yardSlotWorldPos(cell, stackIdx);
     cell.stack.push(c.userData.containerId);
-    c.userData.placed = true;
     c.userData.inYard = true;
+
+    // Drop with gravity to yard position
+    fallingContainers.set(c, { vy: 0, targetY: targetPos.y, snapX: targetPos.x, snapZ: targetPos.z });
+    c.position.x = targetPos.x;
+    c.position.z = targetPos.z;
 
     const pts = scorePlacement(swingScore, false);
     ui.addScore(pts, 'YARD');
-    ui.containerPlaced();
     physics.reset();
     return;
   }
 
-  // Drop in place — penalty
-  c.userData.placed = true;
+  // No target — drop with gravity from current height
   ui.addScore(-50, 'DROPPED!');
+  fallingContainers.set(c, { vy: 0, targetY: null, snapX: null, snapZ: null });
   physics.reset();
+}
+
+// ── Update falling containers ─────────────────────────────────────────────────
+function updateFalling(dt) {
+  for (const [c, state] of fallingContainers) {
+    state.vy -= 18 * dt; // gravity
+    c.position.y += state.vy * dt;
+
+    const sz = containerSize(c.userData.is40ft);
+    const floorY = state.targetY !== null ? state.targetY : groundLevelAt(c.position.x, c.position.z) + sz.h / 2;
+
+    if (c.position.y <= floorY) {
+      c.position.y = floorY;
+      // Snap X/Z if placing in yard
+      if (state.snapX !== null) {
+        c.position.x = state.snapX;
+        c.position.z = state.snapZ;
+      }
+      fallingContainers.delete(c);
+    }
+  }
 }
 
 // ── Game Loop ─────────────────────────────────────────────────────────────────
@@ -233,7 +291,6 @@ function loop() {
   const cabinPos = crane.getCameraPosition();
   camera.position.copy(cabinPos);
 
-  // Camera look direction from yaw/pitch
   const lookDir = new THREE.Vector3(
     Math.sin(controls.yaw) * Math.cos(controls.pitch),
     Math.sin(controls.pitch),
@@ -254,7 +311,10 @@ function loop() {
     heldContainer.rotation.z = physics.pendulum.angleZ * 0.25;
   }
 
-  // Spacebar edge detection — attach or release
+  // Gravity for released containers
+  updateFalling(dt);
+
+  // Spacebar — attach or release
   const spaceDown = controls.isDown('Space');
   if (spaceDown && !spaceWasDown) {
     if (!heldContainer) {
@@ -267,13 +327,11 @@ function loop() {
   }
   spaceWasDown = spaceDown;
 
-  // HUD updates
+  // HUD
   ui.updateCrane(crane.railPos, crane.trolleyPos, crane.hoistHeight);
   ui.updateSwing(physics.getSwingScore());
 
-  // Animate scene (water, etc.)
   animateScene(scene, now * 0.001);
-
   renderer.render(scene, camera);
 }
 
