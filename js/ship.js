@@ -87,16 +87,22 @@ export function buildShip(def, scene) {
   group.add(hull);
 
   // ── Bow (tapered wedge at +X end) ─────────────────────────────────────────
+  // wedgeGeometry tapers along -Z; rotation.y=π/2 redirects that along -X,
+  // so the wide base (backW=B) sits at x=L*0.4 joining the hull box,
+  // and the narrow tip (frontW≈0) points outward at x=L*0.4+bowLen.
   const bowLen = L * 0.15;
   const bow = new THREE.Mesh(wedgeGeometry(B * 0.06, B, 9, bowLen), hullMat);
+  bow.rotation.y = Math.PI / 2;
   bow.position.set(L * 0.4 + bowLen, -4.5, 0);
   bow.castShadow = true;
   group.add(bow);
 
   // ── Stern (slightly tapered at −X end) ───────────────────────────────────
+  // rotation.y=-π/2 redirects the wide base to x=-L*0.4 (hull join),
+  // narrow face points outward at x=-L*0.4-sternLen.
   const sternLen = L * 0.06;
   const stern = new THREE.Mesh(wedgeGeometry(B * 0.65, B, 9, sternLen), hullMat);
-  stern.rotation.y = Math.PI;
+  stern.rotation.y = -Math.PI / 2;
   stern.position.set(-L * 0.4 - sternLen, -4.5, 0);
   stern.castShadow = true;
   group.add(stern);

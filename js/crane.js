@@ -41,30 +41,6 @@ export class Crane {
     const darkMat  = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.6, roughness: 0.5 });
     const grayMat  = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.4, roughness: 0.6 });
 
-    // ── Portal legs (A-frames) ──
-    const legGeo = new THREE.BoxGeometry(0.8, 30, 0.8);
-    const legPositions = [
-      [-1.5, 15, TROLLEY_MIN + 1],
-      [ 1.5, 15, TROLLEY_MIN + 1],
-      [-1.5, 15, TROLLEY_MAX - 5],
-      [ 1.5, 15, TROLLEY_MAX - 5],
-    ];
-    for (const [x, y, z] of legPositions) {
-      const leg = new THREE.Mesh(legGeo, metalMat);
-      leg.position.set(x, y, z);
-      leg.castShadow = true;
-      this._group.add(leg);
-    }
-
-    // ── Horizontal portal beams (top & bottom cross-girders) ──
-    for (const y of [2, 29]) {
-      const crossGeo = new THREE.BoxGeometry(4, 0.8, TROLLEY_MAX - TROLLEY_MIN - 5);
-      const cross = new THREE.Mesh(crossGeo, metalMat);
-      cross.position.set(0, y, (TROLLEY_MIN + TROLLEY_MAX - 4) / 2);
-      cross.castShadow = true;
-      this._group.add(cross);
-    }
-
     // ── Main boom (runs along Z axis) ──
     const boomLen = TROLLEY_MAX - TROLLEY_MIN + 10;
     const boomGeo = new THREE.BoxGeometry(1.2, 1.2, boomLen);
