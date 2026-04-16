@@ -18,6 +18,11 @@ export class UI {
       needle:     document.getElementById('swing-needle'),
       manifest:   document.getElementById('manifest-list'),
       popup:      document.getElementById('score-popup'),
+      damagePanel: document.getElementById('damage-bar-panel'),
+      damageFill:  document.getElementById('damage-bar-fill'),
+      damagePct:   document.getElementById('damage-pct'),
+      gameOver:    document.getElementById('game-over-screen'),
+      goScore:     document.getElementById('go-score'),
     };
 
     this._popupTimeout = null;
@@ -77,6 +82,29 @@ export class UI {
       el.style.opacity = '0';
       setTimeout(() => el.classList.add('hidden'), 500);
     }, 1400);
+  }
+
+  getScore() { return this._score; }
+
+  showDamageBar()  { this._els.damagePanel.classList.remove('hidden'); }
+  hideDamageBar()  { this._els.damagePanel.classList.add('hidden'); }
+
+  // pct: 0.0 – 1.0
+  updateDamage(pct) {
+    const p = Math.min(1, Math.max(0, pct));
+    const pctInt = Math.round(p * 100);
+    this._els.damageFill.style.width = pctInt + '%';
+    this._els.damagePct.textContent  = pctInt + '%';
+    // Colour the border redder as damage mounts
+    const r = Math.round(80 + p * 175);
+    this._els.damagePanel.style.borderColor = `rgba(${r},${Math.round(60 * (1-p))},0,0.7)`;
+    this._els.damagePct.style.color = p > 0.6 ? '#ff2200' : p > 0.3 ? '#ff8800' : '#ff6644';
+  }
+
+  showGameOver(score) {
+    this._els.goScore.textContent = `Final score: ${score.toLocaleString()}`;
+    this._els.gameOver.classList.remove('hidden');
+    document.getElementById('restart-btn').addEventListener('click', () => location.reload());
   }
 
   buildManifest(containers, ships) {

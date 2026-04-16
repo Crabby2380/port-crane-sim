@@ -4,7 +4,7 @@ import { containerSize } from './container.js';
 const TRUCK_COLORS = [0xcc3300, 0x1144aa, 0x228833, 0xcc8800, 0x663388];
 
 // Truck bay positions — within crane trolley reach (trolley max Z ~40)
-// rotation.y = 0 → truck faces +X, flatbed runs along X axis
+// rotation.y = 0 → cab faces +X, flatbed runs along X axis
 const BAYS = [
   { x: -100, z: 36 },
   { x:  -65, z: 36 },
@@ -15,9 +15,9 @@ const BAYS = [
 ];
 
 // Arc departure constants
-const TURN_R   = 10;   // metres — radius of 90° arc turn
-const TURN_DUR = 2.5;  // seconds — time to complete arc
-const DRIVE_SPD = 16;  // m/s — straight-line speed after turn
+const TURN_R    = 10;   // metres — radius of 90° right-hand arc
+const TURN_DUR  = 2.5;  // seconds — time to complete the 90° arc
+const DRIVE_SPD = 16;   // m/s — straight drive speed into background
 
 export class TruckManager {
   constructor(scene) {
@@ -36,10 +36,10 @@ export class TruckManager {
     const wheelMat  = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 });
     const chromeMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.8, roughness: 0.2 });
 
-    // With rotation.y=0 the truck cab faces +X (right).
-    // The cab end is at local +X, the trailer extends towards -X.
+    // rotation.y = 0 → cab faces +X (right).  Flatbed extends to -X (left).
+    // When driving front-first into background, rotation.y = -π/2 (cab faces +Z).
 
-    // Cab body
+    // Cab body — at local +X
     const cab = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.4, 2.5), cabMat);
     cab.position.set(3.8, 1.7, 0);
     cab.castShadow = true;
@@ -70,12 +70,11 @@ export class TruckManager {
     chassis2.position.z = -1.0;
     group.add(chassis2);
 
-    // Trailer flatbed
+    // Trailer flatbed (centred at local -1.5 x)
     const bed = new THREE.Mesh(new THREE.BoxGeometry(8.5, 0.25, 2.7), bodyMat);
     bed.position.set(-1.5, 1.25, 0);
     bed.castShadow = true; bed.receiveShadow = true;
     group.add(bed);
-    group.userData.bed = bed;
 
     // Flatbed side rails
     for (const z of [-1.3, 1.3]) {
@@ -84,7 +83,7 @@ export class TruckManager {
       group.add(rail);
     }
 
-    // Wheels (3 axles, 2 sides)
+    // Wheels — 3 axles × 2 sides
     const wheelGeo = new THREE.CylinderGeometry(0.55, 0.55, 0.45, 12);
     const hubGeo   = new THREE.CylinderGeometry(0.2, 0.2, 0.5, 8);
     const hubMat   = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.6 });
@@ -102,7 +101,7 @@ export class TruckManager {
       }
     }
 
-    // Head lights (facing +X)
+    // Head lights — at cab front (+X side)
     const lightGeo = new THREE.BoxGeometry(0.15, 0.35, 0.5);
     const lightMat = new THREE.MeshStandardMaterial({ color: 0xffffee, emissive: 0xffffee, emissiveIntensity: 0.5 });
     for (const z of [-0.8, 0.8]) {
@@ -126,28 +125,29 @@ export class TruckManager {
     group.add(plate);
 
     group.position.set(bay.x, 0, bay.z);
-    group.rotation.y = 0; // cab faces +X, flatbed (trailer) along -X direction
+    group.rotation.y = 0;  // cab faces +X, waiting to be loaded
 
     group.userData = {
       bay,
-      loaded: false,
-      container: null,
-      // Departure state machine: 'idle' | 'waiting' | 'turning' | 'driving'
-      phase: 'idle',
+      loaded:      false,
+      container:   null,
+      phase:       'idle',     // 'idle' | 'waiting' | 'turning' | 'driving'
       departDelay: 0,
-      // Arc turn
-      turnT: 0,
-      startX: bay.x,
-      startZ: bay.z,
-      initialX: bay.x,
-      initialZ: bay.z,
+      turnT:       0,
+      startX:      bay.x,
+      startZ:      bay.z,
+      initialX:    bay.x,
+      initialZ:    bay.z,
+      // Shake state
+      shakeAmp:    0,
+      shakeT:      0,
     };
 
     this.scene.add(group);
     return group;
   }
 
-  // ── Truck bay ground markings ─────────────────────────────────────────────
+  // ── Bay ground markings ───────────────────────────────────────────────────
   _buildBayMarkings() {
     const Y  = 0.15;
     const PO = { polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 };
@@ -158,8 +158,8 @@ export class TruckManager {
       const W = 13, D = 9;
 
       const strips = [
-        [W, 0.12, x,       Y, z - D / 2],
-        [W, 0.12, x,       Y, z + D / 2],
+        [W, 0.12, x,         Y, z - D / 2],
+        [W, 0.12, x,         Y, z + D / 2],
         [0.12, D, x - W / 2, Y, z],
         [0.12, D, x + W / 2, Y, z],
       ];
@@ -169,7 +169,6 @@ export class TruckManager {
         this.scene.add(mesh);
       }
 
-      // Bay label
       const canvas = document.createElement('canvas');
       canvas.width = 256; canvas.height = 96;
       const ctx = canvas.getContext('2d');
@@ -187,51 +186,43 @@ export class TruckManager {
     }
   }
 
-  // ── Find nearest available truck within range ─────────────────────────────
-  // Returns { truck, offsetX, offsetZ, dist, quality } or null
+  // ── Find nearest available (idle, empty) truck ────────────────────────────
+  // Returns { truck, dist, quality } or null
   findNearby(worldPos, range = 14) {
     let best = null, bestDist = range;
     for (const t of this.trucks) {
       if (t.userData.loaded || t.userData.phase !== 'idle') continue;
 
-      // Ideal placement: centre of flatbed in world coords
-      // Truck rotation.y=0 → local (-1.5, 0, 0) = world (truck.x - 1.5, *, truck.z)
+      // Ideal placement = centre of flatbed: local (-1.5, 0, 0) at rotation.y=0 → world (truck.x - 1.5, *, truck.z)
       const idealX = t.position.x - 1.5;
       const idealZ = t.position.z;
-
-      const dx = worldPos.x - idealX;
-      const dz = worldPos.z - idealZ;
+      const dx   = worldPos.x - idealX;
+      const dz   = worldPos.z - idealZ;
       const dist = Math.sqrt(dx * dx + dz * dz);
 
       if (dist < bestDist) {
         bestDist = dist;
-        // Offset from ideal — used for damage calculation
-        const quality = dist < 1.5 ? 'perfect'
-                      : dist < 3.5 ? 'good'
-                      : dist < 6.0 ? 'near'
-                      : 'none';
-        best = { truck: t, offsetX: dx, offsetZ: dz, dist, quality };
+        const quality = dist < 1.5 ? 'perfect' : dist < 3.5 ? 'good' : dist < 6.0 ? 'near' : 'none';
+        best = { truck: t, dist, quality };
       }
     }
     return best;
   }
 
-  // ── Load container onto truck with optional damage tint ───────────────────
-  loadContainer(truck, container, damage) {
+  // ── Load container onto truck — damage tints the container body ───────────
+  loadContainer(truck, container, damage = 0) {
     const sz = containerSize(container.userData.is40ft);
-    // Place container on flatbed (local -1.5, 0, 0) at world Y = flatbed height + half container
+    // Place container on flatbed (local -1.5 offset → world truck.x - 1.5)
     container.position.set(truck.position.x - 1.5, 1.4 + sz.h / 2, truck.position.z);
     container.rotation.set(0, truck.rotation.y, 0);
 
-    // Tint container body according to damage level
-    if (damage > 0) {
+    // Tint towards orange-red based on damage level
+    if (damage > 0.05) {
       container.traverse(child => {
         if (child.isMesh && child.material && !child.userData.isLabel) {
           const m = child.material.clone();
-          // Shift hue towards orange/red — lerp towards 0x8b2500
           const base = new THREE.Color(m.color);
-          const dmg  = new THREE.Color(0x8b2500);
-          base.lerp(dmg, Math.min(damage * 1.2, 1.0));
+          base.lerp(new THREE.Color(0x8b2500), Math.min(damage * 1.3, 1.0));
           m.color.copy(base);
           child.material = m;
         }
@@ -247,10 +238,30 @@ export class TruckManager {
     truck.userData.turnT       = 0;
   }
 
+  // ── Trigger a shake on the truck (call when container impacts) ────────────
+  // intensity: 0 (tap) → 1 (hard slam)
+  shakeTruck(truck, intensity = 0.5) {
+    truck.userData.shakeAmp = 0.06 + intensity * 0.22;
+    truck.userData.shakeT   = 0.5 + intensity * 0.4;  // shake duration in seconds
+  }
+
   // ── Per-frame update ──────────────────────────────────────────────────────
   update(dt) {
     for (const t of this.trucks) {
       const ud = t.userData;
+
+      // ── Shake (independent of movement phase) ──
+      if (ud.shakeT > 0) {
+        ud.shakeT -= dt;
+        if (ud.shakeT <= 0) {
+          ud.shakeT = 0;
+          t.position.y = 0;
+        } else {
+          // Decaying oscillation
+          t.position.y = Math.sin(ud.shakeT * 38) * ud.shakeAmp * ud.shakeT;
+        }
+      }
+
       if (!ud.loaded) continue;
 
       // ── Waiting before departure ──
@@ -261,52 +272,48 @@ export class TruckManager {
         continue;
       }
 
-      // ── Arc turn: 90° from facing +X to facing +Z ──
+      // ── 90° right-hand arc turn ──
+      // Truck starts facing +X (rotation.y=0).
+      // Turning right (CW from above): rotation.y goes 0 → -π/2 (cab ends up facing +Z = into background).
+      // Arc pivot is TURN_R ahead in the +Z direction from start.
+      // Position formula (CW rotation of offset vector):
+      //   x = startX − TURN_R · sin(φ)
+      //   z = startZ + TURN_R · (1 − cos(φ))        φ: 0 → π/2
       if (ud.phase === 'turning') {
         ud.turnT = Math.min(ud.turnT + dt / TURN_DUR, 1);
-        const theta = ud.turnT * (Math.PI / 2); // 0 → π/2
+        const phi = ud.turnT * (Math.PI / 2);
 
-        // Arc centre is TURN_R ahead of the starting Z (to the right relative to +Z)
-        // Truck starts at (startX, startZ), facing +X (rotation.y=0)
-        // Turn left: pivot at (startX, startZ + TURN_R)
-        const cx = ud.startX;
-        const cz = ud.startZ + TURN_R;
-        t.position.x = cx + TURN_R * Math.sin(theta);   // 0 at start, TURN_R at end
-        t.position.z = cz - TURN_R * Math.cos(theta);   // startZ at start, startZ+TURN_R at end
-        t.rotation.y = theta;                             // 0 = facing +X, π/2 = facing +Z
+        t.position.x = ud.startX - TURN_R * Math.sin(phi);
+        t.position.z = ud.startZ + TURN_R * (1 - Math.cos(phi));
+        t.rotation.y = -phi;  // 0 = facing +X → −π/2 = facing +Z
 
         this._syncContainer(t);
-
-        if (ud.turnT >= 1) {
-          ud.phase = 'driving';
-        }
+        if (ud.turnT >= 1) ud.phase = 'driving';
         continue;
       }
 
-      // ── Straight drive into background (+Z) ──
+      // ── Straight drive cab-first into background (+Z) ──
       if (ud.phase === 'driving') {
         t.position.z += DRIVE_SPD * dt;
         this._syncContainer(t);
 
-        if (t.position.z > 240) {
-          this._resetTruck(t);
-        }
+        if (t.position.z > 240) this._resetTruck(t);
       }
     }
   }
 
-  // Keep container glued to the flatbed while truck moves
+  // ── Keep container locked to flatbed while truck moves ────────────────────
   _syncContainer(truck) {
     const c = truck.userData.container;
     if (!c) return;
     const sz = containerSize(c.userData.is40ft);
-    // Local flatbed offset (-1.5, 0, 0) in truck-local space, then apply truck rotation
-    const localOffset = new THREE.Vector3(-1.5, 1.4 + sz.h / 2, 0);
-    localOffset.applyEuler(new THREE.Euler(0, truck.rotation.y, 0));
+    // Flatbed centre at local (-1.5, 1.4 + sz.h/2, 0) — rotate by truck heading, then add truck world pos
+    const local = new THREE.Vector3(-1.5, 0, 0);
+    local.applyEuler(new THREE.Euler(0, truck.rotation.y, 0));
     c.position.set(
-      truck.position.x + localOffset.x,
-      localOffset.y,
-      truck.position.z + localOffset.z
+      truck.position.x + local.x,
+      truck.position.y + 1.4 + sz.h / 2,
+      truck.position.z + local.z
     );
     c.rotation.set(0, truck.rotation.y, 0);
   }
@@ -319,6 +326,8 @@ export class TruckManager {
     ud.loaded      = false;
     ud.departDelay = 0;
     ud.turnT       = 0;
+    ud.shakeAmp    = 0;
+    ud.shakeT      = 0;
     if (ud.container) {
       ud.container.visible = false;
       ud.container = null;

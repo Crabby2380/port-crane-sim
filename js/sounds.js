@@ -200,6 +200,26 @@ export class SoundSystem {
     this._dockWorkerCall(['Watch it!', 'Heads up!', 'Careful!', 'Oi!']);
   }
 
+  // ── Container crash into truck ────────────────────────────────────────────
+  // intensity: 0 (gentle) → 1 (full speed slam)
+  playCrash(intensity = 0.5) {
+    if (!this.enabled) return;
+    const vol = 0.25 + intensity * 0.55;
+    // Low steel thud
+    this._metalImpact(0.35, 140, 0.3, vol * 0.9);
+    // Mid metallic crack
+    this._metalImpact(0.18, 580, 0.9, vol * 0.65);
+    // High scrape
+    this._metalImpact(0.12, 2800, 1.8, vol * 0.35);
+    // Rumbling boom
+    this._sweepDown(95, 28, 0.45, vol * 0.6);
+    // Metal resonance
+    this._resonantRing(340, vol * 0.18, 1.0);
+    if (intensity > 0.3) {
+      this._dockWorkerCall(['Oof!', 'Easy does it!', 'Too hard!', 'Steady!', 'Watch it!']);
+    }
+  }
+
   // ── Truck loaded — two horn beeps ────────────────────────────────────────
   playTruckLoaded() {
     if (!this.enabled) return;

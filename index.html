@@ -60,10 +60,29 @@
       <div id="manifest-list"></div>
     </div>
 
+    <!-- Damage bar — top centre, shown only while holding a container -->
+    <div id="damage-bar-panel" class="hidden">
+      <div class="hud-label">CONTAINER DAMAGE</div>
+      <div id="damage-bar-outer">
+        <div id="damage-bar-fill"></div>
+      </div>
+      <div id="damage-pct">0%</div>
+    </div>
+
     <div id="score-popup" class="hidden"></div>
     <div id="crosshair"></div>
 
     <button id="help-btn" title="Controls (H)">?</button>
+  </div>
+
+  <!-- Game-over overlay -->
+  <div id="game-over-screen" class="hidden">
+    <div class="game-over-inner">
+      <div class="game-over-title">CONTAINER DESTROYED</div>
+      <div class="game-over-sub">Damage reached 100% — container unsalvageable</div>
+      <div id="go-score"></div>
+      <button id="restart-btn">RESTART OPERATIONS</button>
+    </div>
   </div>
 
   <div id="help-panel" class="hidden">

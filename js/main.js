@@ -55,6 +55,11 @@ let hWasDown       = false;
 let gameStarted    = false;
 const fallingContainers = new Map();
 
+// Damage tracking for held container
+let currentDamage     = 0;     // 0.0 – 1.0 accumulated while holding
+let containerOnTruck  = false; // true while container bottom is resting on a truck top
+let lastSpreaderY     = null;  // previous-frame spreader Y for descent-speed calculation
+
 // ── Loading screen ────────────────────────────────────────────────────────────
 function fakeLoad() {
   const fill = document.querySelector('.loading-fill');
@@ -93,8 +98,11 @@ document.getElementById('help-close').addEventListener('click', () => helpPanel.
 // spreaderWorldY = 29.6 - hoistHeight  (trolley Y 30, minus hoistHeight, minus 0.4 offset)
 const TROLLEY_WORLD_Y = 29.6;
 
+// The top surface of a truck flatbed (Y = bed top in world coords, truck sits at Y=0)
+const TRUCK_FLATBED_TOP = 1.375;
+
 // Returns the highest surface Y directly beneath the given world X,Z.
-// Checks ground, ship decks, and the tops of all stationary containers.
+// Checks ground, ship decks, truck flatbeds, and the tops of all stationary containers.
 function getFloorBelow(worldX, worldZ, skipContainerId = null) {
   let floor = 0; // quayside / open ground
 
@@ -124,7 +132,29 @@ function getFloorBelow(worldX, worldZ, skipContainerId = null) {
     }
   }
 
+  // Truck flatbeds — only idle, empty trucks
+  for (const t of trucks.trucks) {
+    if (t.userData.loaded || t.userData.phase !== 'idle') continue;
+    // Flatbed centred at (truck.x − 1.5, truck.z) in world, footprint ~9 × 3
+    const dx = Math.abs(worldX - (t.position.x - 1.5));
+    const dz = Math.abs(worldZ - t.position.z);
+    if (dx < 5.0 && dz < 1.8) {
+      floor = Math.max(floor, TRUCK_FLATBED_TOP);
+    }
+  }
+
   return floor;
+}
+
+// Returns the idle empty truck whose flatbed is directly below worldX, worldZ (or null)
+function getActiveTruckBelow(worldX, worldZ) {
+  for (const t of trucks.trucks) {
+    if (t.userData.loaded || t.userData.phase !== 'idle') continue;
+    const dx = Math.abs(worldX - (t.position.x - 1.5));
+    const dz = Math.abs(worldZ - t.position.z);
+    if (dx < 5.0 && dz < 1.8) return t;
+  }
+  return null;
 }
 
 function findNearestContainer(spreaderPos) {
@@ -202,6 +232,13 @@ function attachContainer(c) {
   crane.setSpreaderLocked(true);
   sounds.playPickup();
 
+  // Reset damage meter for this new pick-up
+  currentDamage    = 0;
+  containerOnTruck = false;
+  lastSpreaderY    = null;
+  ui.updateDamage(0);
+  ui.showDamageBar();
+
   const pts = scorePickup(physics.getSwingScore());
   ui.addScore(pts, 'PICKUP');
 }
@@ -213,9 +250,12 @@ function releaseContainer(spreaderPos) {
   c.userData.attached = false;
   physics.isLoaded = false;
   heldContainer = null;
+  containerOnTruck = false;
+  lastSpreaderY    = null;
   ui.updateSpreader(false);
   crane.setSpreaderLocked(false);
   c.rotation.set(0, 0, 0);
+  ui.hideDamageBar();
 
   const swingScore = physics.getSwingScore();
 
@@ -238,19 +278,14 @@ function releaseContainer(spreaderPos) {
     return;
   }
 
-  // 2. Truck — with damage calculation
+  // 2. Truck — use accumulated impact damage (currentDamage)
   const truckHit = trucks.findNearby(spreaderPos);
   if (truckHit) {
-    const { truck, dist, quality } = truckHit;
-
-    // Damage from positional offset (0=perfect, 1=destroyed)
-    const offsetDamage = Math.min(dist / 6.0, 1.0);
-    // Damage from swing (swingScore 1=steady → 0 swing damage)
-    const swingDamage  = 1 - swingScore;
-    const damage = offsetDamage * 0.65 + swingDamage * 0.35;
+    const { truck, quality } = truckHit;
+    const damage = currentDamage;
 
     if (damage >= 0.9) {
-      // Container slides off — treat as drop penalty
+      // Too damaged — container slides off
       sounds.playDropPenalty();
       ui.addScore(-80, 'SLID OFF!');
       fallingContainers.set(c, { vy: -2, targetY: null, snapX: null, snapZ: null });
@@ -262,9 +297,9 @@ function releaseContainer(spreaderPos) {
     c.userData.onTruck = true;
     sounds.playTruckLoaded();
 
-    // Score: 350 base × (1-damage) × quality bonus from swing steadiness
+    // Score: 350 base × (1−damage) × swing quality
     const baseScore = Math.round(350 * (1 - damage) * (0.5 + swingScore * 0.5));
-    const label = quality === 'perfect' ? 'PERFECT LOAD!' : quality === 'good' ? 'GOOD LOAD!' : 'TRUCK LOADED';
+    const label = damage < 0.1 ? 'PERFECT LOAD!' : damage < 0.35 ? 'GOOD LOAD!' : 'TRUCK LOADED';
     ui.addScore(baseScore, label);
     ui.containerPlaced();
     physics.reset();
@@ -292,6 +327,18 @@ function releaseContainer(spreaderPos) {
   ui.addScore(-50, 'DROPPED!');
   fallingContainers.set(c, { vy: 0, targetY: null, snapX: null, snapZ: null });
   physics.reset();
+}
+
+// ── Game over ─────────────────────────────────────────────────────────────────
+function triggerGameOver() {
+  gameStarted = false;
+  if (heldContainer) {
+    heldContainer.userData.attached = false;
+    physics.isLoaded = false;
+    heldContainer = null;
+  }
+  ui.hideDamageBar();
+  ui.showGameOver(ui.getScore());
 }
 
 // ── Gravity for released containers ──────────────────────────────────────────
@@ -356,6 +403,43 @@ function loop() {
       crane.hoistHeight = maxHoist;
       crane.refreshSpreaderPos(physics);    // re-apply transforms immediately
     }
+  }
+
+  // ── Container–truck impact detection ──────────────────────────────────────
+  if (heldContainer) {
+    const sp  = crane.getSpreaderWorldPos();
+    const sz  = containerSize(heldContainer.userData.is40ft);
+    const containerBottomY = sp.y - sz.h;
+    const truckBelow = getActiveTruckBelow(sp.x, sp.z);
+    const nowOnTruck = truckBelow !== null && containerBottomY <= TRUCK_FLATBED_TOP + 0.08;
+
+    if (nowOnTruck && !containerOnTruck) {
+      // First contact this approach — calculate impact
+      const descentSpeed = lastSpreaderY !== null
+        ? Math.max(0, (lastSpreaderY - sp.y) / dt)
+        : 0;
+
+      const speedFactor  = Math.min(descentSpeed / 4.0, 1.0); // 4 m/s = full speed
+      // Offset from ideal flatbed centre
+      const idealX = truckBelow.position.x - 1.5;
+      const idealZ = truckBelow.position.z;
+      const offsetDist  = Math.sqrt((sp.x - idealX) ** 2 + (sp.z - idealZ) ** 2);
+      const offsetFactor = Math.min(offsetDist / 5.0, 1.0);
+
+      // Damage: 0–45% per hit; hard slam off-centre ≈ 45%, gentle centred ≈ near 0%
+      const impactDamage = (speedFactor * 0.65 + offsetFactor * 0.35) * 0.45;
+
+      if (impactDamage > 0.02) {
+        currentDamage = Math.min(1.0, currentDamage + impactDamage);
+        ui.updateDamage(currentDamage);
+        sounds.playCrash(speedFactor);
+        trucks.shakeTruck(truckBelow, speedFactor);
+
+        if (currentDamage >= 1.0) triggerGameOver();
+      }
+    }
+    containerOnTruck = nowOnTruck;
+    lastSpreaderY    = sp.y;
   }
 
   // Camera
