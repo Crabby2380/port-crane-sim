@@ -10,7 +10,7 @@ export class SoundSystem {
     this._speechQueue = [];
     this._speechBusy  = false;
     this._ambientTimer  = 0;
-    this._seagullTimer  = 4 + Math.random() * 6; // first call in 4-10s
+    this._currentWeather = 'sunny';
   }
 
   init() {
@@ -138,8 +138,39 @@ export class SoundSystem {
     // 3. Wind / sea wash — low-pass filtered noise
     this._makeNoiseLayer(20, 400, 0.15, 0.018);
 
-    // 4. Occasional seagull calls & ship sounds — scheduled by update()
-    // (handled in tick())
+    // 4. Rain layer — noise burst filtered to rainfall frequency range
+    this._rainGain = this.ctx.createGain();
+    this._rainGain.gain.value = 0;
+    this._makeNoiseLayer(3200, 1200, 0.3, 1); // high-freq rain hiss — connected below
+    // Override: build dedicated rain source connected to _rainGain
+    const rainLen = this.ctx.sampleRate * 3;
+    const rainBuf = this.ctx.createBuffer(1, rainLen, this.ctx.sampleRate);
+    const rainD   = rainBuf.getChannelData(0);
+    for (let i = 0; i < rainLen; i++) rainD[i] = Math.random() * 2 - 1;
+    const rainSrc = this.ctx.createBufferSource();
+    rainSrc.buffer = rainBuf; rainSrc.loop = true;
+    const rainHp = this.ctx.createBiquadFilter();
+    rainHp.type = 'highpass'; rainHp.frequency.value = 1200; rainHp.Q.value = 0.4;
+    const rainLp = this.ctx.createBiquadFilter();
+    rainLp.type = 'lowpass'; rainLp.frequency.value = 6000;
+    rainSrc.connect(rainHp); rainHp.connect(rainLp); rainLp.connect(this._rainGain);
+    this._rainGain.connect(this._master);
+    rainSrc.start();
+
+    // 5. Wind layer — low rumble that strengthens in windy/rainy weather
+    this._windGain = this.ctx.createGain();
+    this._windGain.gain.value = 0;
+    const windLen = this.ctx.sampleRate * 5;
+    const windBuf = this.ctx.createBuffer(1, windLen, this.ctx.sampleRate);
+    const windD   = windBuf.getChannelData(0);
+    for (let i = 0; i < windLen; i++) windD[i] = Math.random() * 2 - 1;
+    const windSrc = this.ctx.createBufferSource();
+    windSrc.buffer = windBuf; windSrc.loop = true;
+    const windLp = this.ctx.createBiquadFilter();
+    windLp.type = 'lowpass'; windLp.frequency.value = 200;
+    windSrc.connect(windLp); windLp.connect(this._windGain);
+    this._windGain.connect(this._master);
+    windSrc.start();
   }
 
   _makeNoiseLayer(lpFreq, hpFreq, q, vol) {
@@ -228,22 +259,25 @@ export class SoundSystem {
     this._dockWorkerCall(['Truck loaded!', 'Moving out!', 'Clear the way!']);
   }
 
+  // ── Set weather state — adjusts rain/wind ambient layers ─────────────────
+  setWeather(state) {
+    if (!this.enabled) return;
+    this._currentWeather = state;
+    const t = this.ctx.currentTime;
+    const rainVol = state === 'rainy'  ? 0.045 : 0;
+    const windVol = state === 'windy'  ? 0.04
+                  : state === 'rainy'  ? 0.025
+                  : state === 'cloudy' ? 0.01
+                  : 0;
+    this._rainGain.gain.setTargetAtTime(rainVol, t, 2.5);
+    this._windGain.gain.setTargetAtTime(windVol, t, 2.5);
+  }
+
   // ── Periodic ambience tick (call from game loop) ──────────────────────────
   tick(dt) {
     if (!this.enabled) return;
 
-    // Seagulls — frequent, independent timer (every 6–18s)
-    this._seagullTimer -= dt;
-    if (this._seagullTimer <= 0) {
-      this._seagullTimer = 6 + Math.random() * 12;
-      // 1–3 gulls calling in quick succession
-      const count = 1 + Math.floor(Math.random() * 3);
-      for (let i = 0; i < count; i++) {
-        setTimeout(() => { if (this.enabled) this._seagullCall(); }, i * 380);
-      }
-    }
-
-    // Other ambient events (ship horn, machinery, worker voices)
+    // Ambient events (ship horn, machinery, worker voices)
     this._ambientTimer -= dt;
     if (this._ambientTimer <= 0) {
       this._ambientTimer = 14 + Math.random() * 20;
@@ -316,25 +350,6 @@ export class SoundSystem {
     }
   }
 
-  _seagullCall() {
-    // Three rising-falling frequency sweeps = seagull cry
-    const delays = [0, 0.28, 0.52];
-    for (const delay of delays) {
-      const t = this.ctx.currentTime + delay;
-      const osc = this.ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(900, t);
-      osc.frequency.linearRampToValueAtTime(1600, t + 0.1);
-      osc.frequency.linearRampToValueAtTime(800,  t + 0.22);
-      const g = this.ctx.createGain();
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.04, t + 0.04);
-      g.gain.linearRampToValueAtTime(0, t + 0.22);
-      osc.connect(g); g.connect(this._master);
-      osc.start(t); osc.stop(t + 0.25);
-    }
-  }
-
   _distantShipHorn() {
     // Low, long blast — classic container ship fog horn
     const t = this.ctx.currentTime;
@@ -372,6 +387,15 @@ export class SoundSystem {
     g.gain.linearRampToValueAtTime(0, t + dur);
     src.connect(bp); bp.connect(g); g.connect(this._master);
     src.start(t);
+  }
+
+  // ── Ship departure — three blasts ────────────────────────────────────────
+  playShipDeparture() {
+    if (!this.enabled) return;
+    for (const delay of [0, 1.8, 3.2]) {
+      setTimeout(() => { if (this.enabled) this._distantShipHorn(); }, delay * 1000);
+    }
+    this._dockWorkerCall(['All clear! Ship departing!', 'Stand clear of the quay!', 'She\'s casting off!']);
   }
 
   // ── Dock worker callouts (Web Speech API) ─────────────────────────────────

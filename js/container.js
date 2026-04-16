@@ -117,28 +117,35 @@ export function spawnContainersOnShip(shipObj, scene) {
   const containers = [];
   let spawned = 0;
 
-  // Occupy ground-tier slots first (tier 0), then stack upward
-  const tier0 = slots.filter(s => s.tier === 0);
+  // Sort tier-first so ground level fills before stacking
+  const sorted = [...slots].sort((a, b) => a.tier - b.tier || a.bay - b.bay || a.row - b.row);
 
-  // For general/large ships use a mix, feeder is all 20ft
-  for (const slot of tier0) {
+  const worldPos = new THREE.Vector3();
+  mesh.getWorldPosition(worldPos);
+
+  for (const slot of sorted) {
     if (spawned >= def.containerCount) break;
+
+    // Only stack if the tier below is occupied (realistic stacking constraint)
+    if (slot.tier > 0) {
+      const below = slots.find(s => s.bay === slot.bay && s.row === slot.row && s.tier === slot.tier - 1);
+      if (!below?.occupied) continue;
+    }
 
     const use40ft = def.mixedSizes && slot.is40ft;
     const c = createContainer(use40ft, spawned);
-    const worldPos = new THREE.Vector3();
-    mesh.getWorldPosition(worldPos);
+    const wy = worldPos.y + slot.localY + containerSize(use40ft).h / 2;
 
-    c.position.set(
-      worldPos.x + slot.localX,
-      worldPos.y + slot.localY + containerSize(use40ft).h / 2,
-      worldPos.z + slot.localZ
-    );
+    c.position.set(worldPos.x + slot.localX, wy, worldPos.z + slot.localZ);
 
-    slot.occupied = true;
-    slot.containerId = c.userData.containerId;
+    // Mark origin for ship-bobbing sync and departure cleanup
+    c.userData.originShip  = def.id;
+    c.userData.originalY   = wy;
     c.userData.currentSlot = slot;
-    c.userData.onShip = def.id;
+    c.userData.onShip      = def.id;
+
+    slot.occupied    = true;
+    slot.containerId = c.userData.containerId;
 
     scene.add(c);
     containers.push(c);

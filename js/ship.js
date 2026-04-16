@@ -3,48 +3,49 @@ import * as THREE from 'three';
 export const SLOT  = { w: 2.5, h: 2.6, d: 6.1  };
 export const SLOT40= { w: 2.5, h: 2.6, d: 12.2 };
 
+// All ships berth at the same central position — they come in sequence.
 export const SHIP_DEFS = [
   {
     id: 'feeder',
-    name: 'MV Albatross (Feeder)',
+    name: 'MV Albatross',
     hullColor: 0xcc3322,
     deckColor: 0x555555,
     funnelColor: 0xdd2200,
-    length: 80,
-    beam: 18,
-    berthX: -80,
-    bays: 4, rows: 3, maxTier: 2,
+    length: 55,
+    beam: 12,
+    berthX: 0,
+    bays: 3, rows: 2, maxTier: 2,
     mixedSizes: false,
-    containerCount: 24,
+    containerCount: 12,
     description: 'Small feeder vessel. 20ft containers only.',
   },
   {
     id: 'general',
-    name: 'MV Pacific Star (General)',
+    name: 'MV Pacific Star',
     hullColor: 0x224488,
     deckColor: 0x444455,
     funnelColor: 0x1133aa,
-    length: 130,
-    beam: 22,
-    berthX: 10,
-    bays: 6, rows: 4, maxTier: 3,
+    length: 70,
+    beam: 15,
+    berthX: 0,
+    bays: 4, rows: 2, maxTier: 2,
     mixedSizes: true,
-    containerCount: 60,
-    description: 'Medium vessel. Mix of 20ft & 40ft slots.',
+    containerCount: 16,
+    description: 'Medium vessel. Mix of 20ft & 40ft containers.',
   },
   {
     id: 'large',
-    name: 'MV Titan Express (Large)',
+    name: 'MV Titan Express',
     hullColor: 0x226622,
     deckColor: 0x334433,
     funnelColor: 0x115511,
-    length: 200,
-    beam: 28,
-    berthX: 120,
-    bays: 10, rows: 6, maxTier: 4,
+    length: 85,
+    beam: 18,
+    berthX: 0,
+    bays: 5, rows: 2, maxTier: 2,
     mixedSizes: true,
-    containerCount: 100,
-    description: 'Large container vessel. Multi-bay, stack order matters.',
+    containerCount: 20,
+    description: 'Large vessel. Mix of 20ft & 40ft containers.',
   },
 ];
 
@@ -276,7 +277,59 @@ export function buildShip(def, scene) {
 
   group.position.set(def.berthX, 0, -12);
   scene.add(group);
-  return { mesh: group, def, slots };
+
+  return {
+    mesh:      group,
+    def,
+    slots,
+    phase:     'berth',   // 'berth' | 'departing' | 'arriving'
+    phaseT:    0,
+    berthX:    def.berthX,
+    bobPhase:  Math.random() * Math.PI * 2,
+    bobY:      0,
+  };
+}
+
+// ── Per-frame ship animation (bobbing + departure/arrival movement) ───────────
+// Returns: 'berth' | 'departed' | 'arrived'
+export function updateShip(ship, dt) {
+  const t = performance.now() * 0.001;
+
+  if (ship.phase === 'departing') {
+    ship.phaseT += dt;
+    ship.mesh.position.x += 22 * dt;
+    // Slight list as she accelerates away
+    ship.mesh.rotation.z = Math.sin(ship.phaseT * 0.8) * 0.012;
+    if (ship.phaseT > 7) return 'departed';
+    return 'departing';
+  }
+
+  if (ship.phase === 'arriving') {
+    ship.phaseT += dt;
+    const target = ship.berthX;
+    const dist   = target - ship.mesh.position.x;
+    if (Math.abs(dist) < 0.5) {
+      ship.mesh.position.x = target;
+      ship.mesh.rotation.z = 0;
+      ship.phase  = 'berth';
+      ship.phaseT = 0;
+      return 'arrived';
+    }
+    // Decelerate as it approaches berth
+    const speed = Math.max(4, Math.min(22, Math.abs(dist) * 1.5));
+    ship.mesh.position.x += Math.sign(dist) * speed * dt;
+    // Gentle roll on approach
+    ship.mesh.rotation.z = Math.sin(ship.phaseT * 0.5) * 0.008;
+    return 'arriving';
+  }
+
+  // ── Normal berth: gentle bob ──────────────────────────────────────────────
+  ship.bobY = Math.sin(t * 0.45 + ship.bobPhase) * 0.2
+            + Math.sin(t * 0.18 + ship.bobPhase + 1.1) * 0.06;
+  ship.mesh.position.y = ship.bobY;
+  // Subtle roll
+  ship.mesh.rotation.z = Math.sin(t * 0.22 + ship.bobPhase) * 0.008;
+  return 'berth';
 }
 
 function generateSlotGrid(def) {

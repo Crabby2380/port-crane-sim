@@ -201,11 +201,14 @@ function addBackgroundElements(scene) {
 }
 
 export function animateScene(scene, t) {
-  // subtle water colour shift
   scene.traverse(obj => {
     if (obj.userData.isWater) {
-      const hue = 0.55 + Math.sin(t * 0.3) * 0.02;
-      obj.material.color.setHSL(hue, 0.7, 0.28);
+      // Swell: gentle vertical oscillation of the whole water plane
+      obj.position.y = -0.5 + Math.sin(t * 0.38) * 0.14 + Math.sin(t * 0.17) * 0.05;
+      // Colour shift — deeper in rough "weather"
+      const hue = 0.55 + Math.sin(t * 0.28) * 0.025;
+      const lit = 0.25 + Math.sin(t * 0.11) * 0.04;
+      obj.material.color.setHSL(hue, 0.72, lit);
     }
   });
 }

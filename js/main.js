@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildScene, animateScene } from './scene.js';
-import { buildShip, SHIP_DEFS } from './ship.js';
+import { buildShip, updateShip, SHIP_DEFS } from './ship.js';
 import { spawnContainersOnShip, buildYardGrid, yardSlotWorldPos, containerSize } from './container.js';
 import { Crane } from './crane.js';
 import { PhysicsWorld } from './physics.js';
@@ -8,6 +8,7 @@ import { Controls } from './controls.js';
 import { UI, scorePickup, scorePlacement } from './ui.js';
 import { SoundSystem } from './sounds.js';
 import { TruckManager } from './truck.js';
+import { WeatherSystem } from './weather.js';
 
 // ── Renderer ──────────────────────────────────────────────────────────────────
 const canvas = document.getElementById('game-canvas');
@@ -30,23 +31,38 @@ const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerH
 
 // ── Scene bootstrap ───────────────────────────────────────────────────────────
 const scene = buildScene(renderer);
-const ships = SHIP_DEFS.map(def => buildShip(def, scene));
 
+// Build all three ship meshes; position idle ships far off-screen
+const ships = SHIP_DEFS.map(def => buildShip(def, scene));
+ships[1].mesh.position.set(999, 0, -12);
+ships[2].mesh.position.set(999, 0, -12);
+
+// Active ship tracking
+let activeShipIdx = 0;
+let activeShip    = ships[0];
+
+// All live containers (grows as new ships arrive)
 let allContainers = [];
-ships.forEach(ship => {
+let totalContainersEver = 0;  // cumulative for manifest
+
+// Spawn containers on the first ship
+function spawnForShip(ship) {
   const cs = spawnContainersOnShip(ship, scene);
   allContainers.push(...cs);
-});
+  totalContainersEver += cs.length;
+  ui.setTotal(totalContainersEver);
+  ui.buildManifest(cs, [ship]);
+  updateShipStateUI('AT BERTH');
+}
 
-const yardGrid   = buildYardGrid();
-const crane      = new Crane(scene);
-const physics    = new PhysicsWorld();
-const controls   = new Controls(canvas);
-const ui         = new UI();
-const sounds     = new SoundSystem();
-const trucks     = new TruckManager(scene);
-
-ui.setTotal(allContainers.length);
+const yardGrid = buildYardGrid();
+const crane    = new Crane(scene);
+const physics  = new PhysicsWorld();
+const controls = new Controls(canvas);
+const ui       = new UI();
+const sounds   = new SoundSystem();
+const trucks   = new TruckManager(scene);
+let weather    = null; // created after sounds.init()
 
 // ── Game state ────────────────────────────────────────────────────────────────
 let heldContainer  = null;
@@ -55,10 +71,20 @@ let hWasDown       = false;
 let gameStarted    = false;
 const fallingContainers = new Map();
 
-// Damage tracking for held container
-let currentDamage     = 0;     // 0.0 – 1.0 accumulated while holding
-let containerOnTruck  = false; // true while container bottom is resting on a truck top
-let lastSpreaderY     = null;  // previous-frame spreader Y for descent-speed calculation
+// Damage tracking
+let currentDamage     = 0;
+let containerOnTruck  = false;
+let lastSpreaderY     = null;
+
+// Ship departure state
+let shipDepartPending = false;  // waiting for check
+let shipStateTimer    = 0;      // cooldown before next check
+
+// ── HUD helpers ───────────────────────────────────────────────────────────────
+function updateShipStateUI(txt) {
+  const el = document.getElementById('ship-state');
+  if (el) el.textContent = txt;
+}
 
 // ── Loading screen ────────────────────────────────────────────────────────────
 function fakeLoad() {
@@ -79,66 +105,56 @@ fakeLoad();
 
 document.getElementById('start-btn').addEventListener('click', () => {
   document.getElementById('start-overlay').style.display = 'none';
-  ui.show();
-  ui.buildManifest(allContainers, ships);
   sounds.init();
   sounds.resume();
+  weather = new WeatherSystem(scene, sounds);
+  spawnForShip(activeShip);
+  ui.show();
   gameStarted = true;
 });
 
-// ── Help panel toggle ─────────────────────────────────────────────────────────
+// ── Help panel ────────────────────────────────────────────────────────────────
 const helpPanel = document.getElementById('help-panel');
 function toggleHelp() { helpPanel.classList.toggle('hidden'); }
 document.getElementById('help-btn').addEventListener('click', toggleHelp);
 document.getElementById('help-close').addEventListener('click', () => helpPanel.classList.add('hidden'));
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-// Trolley sits at world Y=30 in the crane group; spreader hangs below it.
-// spreaderWorldY = 29.6 - hoistHeight  (trolley Y 30, minus hoistHeight, minus 0.4 offset)
-const TROLLEY_WORLD_Y = 29.6;
-
-// The top surface of a truck flatbed (Y = bed top in world coords, truck sits at Y=0)
+// ── Constants ─────────────────────────────────────────────────────────────────
+const TROLLEY_WORLD_Y   = 29.6;
 const TRUCK_FLATBED_TOP = 1.375;
 
-// Returns the highest surface Y directly beneath the given world X,Z.
-// Checks ground, ship decks, truck flatbeds, and the tops of all stationary containers.
+// ── Floor detection ───────────────────────────────────────────────────────────
 function getFloorBelow(worldX, worldZ, skipContainerId = null) {
-  let floor = 0; // quayside / open ground
+  let floor = 0;
 
-  // Container tops
   for (const c of allContainers) {
-    if (c.userData.attached) continue;              // skip held container
-    if (fallingContainers.has(c)) continue;         // skip mid-air containers
+    if (c.userData.attached) continue;
+    if (fallingContainers.has(c)) continue;
     if (skipContainerId !== null && c.userData.containerId === skipContainerId) continue;
-
     const sz = containerSize(c.userData.is40ft);
     const dx = Math.abs(c.position.x - worldX);
     const dz = Math.abs(c.position.z - worldZ);
-
-    // Horizontal footprint check with small tolerance
     if (dx < sz.d / 2 + 0.4 && dz < sz.w / 2 + 0.4) {
       floor = Math.max(floor, c.position.y + sz.h / 2);
     }
   }
 
-  // Ship decks
-  for (const ship of ships) {
-    const sp = new THREE.Vector3();
-    ship.mesh.getWorldPosition(sp);
-    if (Math.abs(worldX - sp.x) < ship.def.length / 2 &&
-        Math.abs(worldZ - sp.z) < ship.def.beam / 2) {
-      floor = Math.max(floor, 0.4); // deck surface
-    }
+  // Ship deck — account for bobbing Y
+  const sp = new THREE.Vector3();
+  activeShip.mesh.getWorldPosition(sp);
+  if (Math.abs(worldX - sp.x) < activeShip.def.length / 2 &&
+      Math.abs(worldZ - sp.z) < activeShip.def.beam / 2) {
+    floor = Math.max(floor, sp.y + 0.4);
   }
 
-  // Truck flatbeds — only idle, empty trucks
+  // Truck flatbeds
   for (const t of trucks.trucks) {
     if (t.userData.loaded || t.userData.phase !== 'idle') continue;
-    // Flatbed centred at (truck.x − 1.5, truck.z) in world, footprint ~9 × 3
-    const dx = Math.abs(worldX - (t.position.x - 1.5));
+    const fo = t.userData.flatbedOffset;
+    const dx = Math.abs(worldX - (t.position.x + fo));
     const dz = Math.abs(worldZ - t.position.z);
-    if (dx < 5.0 && dz < 1.8) {
+    const halfW = t.userData.size === 'large' ? 7.5 : 4.5;
+    if (dx < halfW && dz < 1.8) {
       floor = Math.max(floor, TRUCK_FLATBED_TOP);
     }
   }
@@ -146,13 +162,16 @@ function getFloorBelow(worldX, worldZ, skipContainerId = null) {
   return floor;
 }
 
-// Returns the idle empty truck whose flatbed is directly below worldX, worldZ (or null)
-function getActiveTruckBelow(worldX, worldZ) {
+function getActiveTruckBelow(worldX, worldZ, is40ft) {
+  const needSize = is40ft ? 'large' : 'small';
   for (const t of trucks.trucks) {
     if (t.userData.loaded || t.userData.phase !== 'idle') continue;
-    const dx = Math.abs(worldX - (t.position.x - 1.5));
-    const dz = Math.abs(worldZ - t.position.z);
-    if (dx < 5.0 && dz < 1.8) return t;
+    if (t.userData.size !== needSize) continue;
+    const fo   = t.userData.flatbedOffset;
+    const dx   = Math.abs(worldX - (t.position.x + fo));
+    const dz   = Math.abs(worldZ - t.position.z);
+    const halfW = is40ft ? 7.5 : 4.5;
+    if (dx < halfW && dz < 1.8) return t;
   }
   return null;
 }
@@ -161,11 +180,11 @@ function findNearestContainer(spreaderPos) {
   let best = null, bestDist = 4.0;
   for (const c of allContainers) {
     if (c.userData.inShipSlot || c.userData.attached || fallingContainers.has(c)) continue;
-    const sz  = containerSize(c.userData.is40ft);
+    const sz   = containerSize(c.userData.is40ft);
     const topY = c.position.y + sz.h / 2;
-    const dx = Math.abs(c.position.x - spreaderPos.x);
-    const dz = Math.abs(c.position.z - spreaderPos.z);
-    const dy = Math.abs(topY - spreaderPos.y);
+    const dx   = Math.abs(c.position.x - spreaderPos.x);
+    const dz   = Math.abs(c.position.z - spreaderPos.z);
+    const dy   = Math.abs(topY - spreaderPos.y);
     const dist = Math.sqrt(dx*dx + dz*dz + dy*dy);
     if (dist < bestDist) { bestDist = dist; best = c; }
   }
@@ -176,8 +195,8 @@ function findNearestYardCell(worldPos) {
   let best = null, bestDist = 12;
   for (const cell of yardGrid) {
     if (cell.stack.length >= 4) continue;
-    const dx = cell.x - worldPos.x;
-    const dz = cell.z - worldPos.z;
+    const dx   = cell.x - worldPos.x;
+    const dz   = cell.z - worldPos.z;
     const dist = Math.sqrt(dx*dx + dz*dz);
     if (dist < bestDist) { bestDist = dist; best = cell; }
   }
@@ -186,18 +205,16 @@ function findNearestYardCell(worldPos) {
 
 function findNearestShipSlot(worldPos) {
   let best = null, bestDist = 8;
-  for (const ship of ships) {
-    const shipWorldPos = new THREE.Vector3();
-    ship.mesh.getWorldPosition(shipWorldPos);
-    for (const slot of ship.slots) {
-      if (slot.occupied) continue;
-      const wx = shipWorldPos.x + slot.localX;
-      const wz = shipWorldPos.z + slot.localZ;
-      const wy = shipWorldPos.y + slot.localY;
-      const dx = wx - worldPos.x, dy = wy - worldPos.y, dz = wz - worldPos.z;
-      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-      if (dist < bestDist) { bestDist = dist; best = { slot, ship, wx, wy, wz }; }
-    }
+  const shipWorldPos = new THREE.Vector3();
+  activeShip.mesh.getWorldPosition(shipWorldPos);
+  for (const slot of activeShip.slots) {
+    if (slot.occupied) continue;
+    const wx = shipWorldPos.x + slot.localX;
+    const wz = shipWorldPos.z + slot.localZ;
+    const wy = shipWorldPos.y + slot.localY;
+    const dx = wx - worldPos.x, dy = wy - worldPos.y, dz = wz - worldPos.z;
+    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    if (dist < bestDist) { bestDist = dist; best = { slot, wx, wy, wz }; }
   }
   return best;
 }
@@ -211,8 +228,8 @@ function removeFromYard(c) {
         const other = allContainers.find(o => o.userData.containerId === otherId);
         if (other) {
           const sz = containerSize(other.userData.is40ft);
-          const newIdx = cell.stack.indexOf(otherId);
-          other.position.y = sz.h / 2 + newIdx * sz.h;
+          const ni = cell.stack.indexOf(otherId);
+          other.position.y = sz.h / 2 + ni * sz.h;
         }
       }
       break;
@@ -220,19 +237,51 @@ function removeFromYard(c) {
   }
 }
 
+// ── Ship unload detection ─────────────────────────────────────────────────────
+function isShipEmpty() {
+  // Ship is empty when no containers remain in a ship slot on the active ship
+  return !allContainers.some(c =>
+    c.userData.onShip === activeShip.def.id && c.userData.inShipSlot === true
+  );
+}
+
+function startShipDeparture() {
+  if (activeShip.phase !== 'berth') return;
+  activeShip.phase = 'departing';
+  activeShip.phaseT = 0;
+  sounds.playShipDeparture();
+  updateShipStateUI('DEPARTING…');
+  ui.addScore(500, 'SHIP CLEARED!');
+}
+
+function arriveNextShip() {
+  activeShipIdx = (activeShipIdx + 1) % SHIP_DEFS.length;
+  activeShip = ships[activeShipIdx];
+
+  // Reset slots
+  for (const slot of activeShip.slots) { slot.occupied = false; slot.containerId = null; }
+
+  // Position new ship arriving from sea side (-X)
+  activeShip.mesh.position.set(activeShip.berthX - 180, 0, -12);
+  activeShip.mesh.rotation.z = 0;
+  activeShip.phase  = 'arriving';
+  activeShip.phaseT = 0;
+  updateShipStateUI('INCOMING…');
+}
+
+// ── Container attach/release ──────────────────────────────────────────────────
 function attachContainer(c) {
   if (c.userData.inYard) {
     removeFromYard(c);
     c.userData.inYard = false;
   }
   c.userData.attached = true;
-  physics.isLoaded = true;
-  heldContainer = c;
+  physics.isLoaded    = true;
+  heldContainer       = c;
   ui.updateSpreader(true);
   crane.setSpreaderLocked(true);
   sounds.playPickup();
 
-  // Reset damage meter for this new pick-up
   currentDamage    = 0;
   containerOnTruck = false;
   lastSpreaderY    = null;
@@ -248,10 +297,10 @@ function releaseContainer(spreaderPos) {
 
   const c = heldContainer;
   c.userData.attached = false;
-  physics.isLoaded = false;
-  heldContainer = null;
-  containerOnTruck = false;
-  lastSpreaderY    = null;
+  physics.isLoaded    = false;
+  heldContainer       = null;
+  containerOnTruck    = false;
+  lastSpreaderY       = null;
   ui.updateSpreader(false);
   crane.setSpreaderLocked(false);
   c.rotation.set(0, 0, 0);
@@ -262,13 +311,13 @@ function releaseContainer(spreaderPos) {
   // 1. Ship slot
   const slotHit = findNearestShipSlot(spreaderPos);
   if (slotHit) {
-    const { slot, ship, wx, wy, wz } = slotHit;
+    const { slot, wx, wy, wz } = slotHit;
     const sz = containerSize(c.userData.is40ft);
     c.position.set(wx, wy + sz.h / 2, wz);
-    slot.occupied = true;
+    slot.occupied    = true;
     slot.containerId = c.userData.containerId;
     c.userData.inShipSlot = true;
-    c.userData.onShip = ship.def.id;
+    c.userData.onShip     = activeShip.def.id;
     sounds.playPlace();
     const pts = scorePlacement(swingScore, true);
     ui.addScore(pts, 'PLACED ✓');
@@ -278,35 +327,29 @@ function releaseContainer(spreaderPos) {
     return;
   }
 
-  // 2. Truck — use accumulated impact damage (currentDamage)
-  const truckHit = trucks.findNearby(spreaderPos);
+  // 2. Truck — size-matched, accumulated damage
+  const truckHit = trucks.findNearby(spreaderPos, c.userData.is40ft);
   if (truckHit) {
     const { truck, quality } = truckHit;
-    const damage = currentDamage;
-
-    if (damage >= 0.9) {
-      // Too damaged — container slides off
+    if (currentDamage >= 0.9) {
       sounds.playDropPenalty();
       ui.addScore(-80, 'SLID OFF!');
       fallingContainers.set(c, { vy: -2, targetY: null, snapX: null, snapZ: null });
       physics.reset();
       return;
     }
-
-    trucks.loadContainer(truck, c, damage);
+    trucks.loadContainer(truck, c, currentDamage);
     c.userData.onTruck = true;
     sounds.playTruckLoaded();
-
-    // Score: 350 base × (1−damage) × swing quality
-    const baseScore = Math.round(350 * (1 - damage) * (0.5 + swingScore * 0.5));
-    const label = damage < 0.1 ? 'PERFECT LOAD!' : damage < 0.35 ? 'GOOD LOAD!' : 'TRUCK LOADED';
+    const baseScore = Math.round(350 * (1 - currentDamage) * (0.5 + swingScore * 0.5));
+    const label = currentDamage < 0.1 ? 'PERFECT LOAD!' : currentDamage < 0.35 ? 'GOOD LOAD!' : 'TRUCK LOADED';
     ui.addScore(baseScore, label);
     ui.containerPlaced();
     physics.reset();
     return;
   }
 
-  // 3. Yard cell
+  // 3. Yard
   const cell = findNearestYardCell(spreaderPos);
   if (cell) {
     const stackIdx  = cell.stack.length;
@@ -322,7 +365,7 @@ function releaseContainer(spreaderPos) {
     return;
   }
 
-  // 4. Drop — gravity, penalty
+  // 4. Free drop — penalty
   sounds.playDropPenalty();
   ui.addScore(-50, 'DROPPED!');
   fallingContainers.set(c, { vy: 0, targetY: null, snapX: null, snapZ: null });
@@ -341,7 +384,7 @@ function triggerGameOver() {
   ui.showGameOver(ui.getScore());
 }
 
-// ── Gravity for released containers ──────────────────────────────────────────
+// ── Falling container gravity ─────────────────────────────────────────────────
 function updateFalling(dt) {
   for (const [c, state] of fallingContainers) {
     state.vy -= 18 * dt;
@@ -377,56 +420,89 @@ function loop() {
 
   sounds.resume();
 
-  // Crane movement
-  crane.update(dt, controls, physics);
+  // ── Weather ──────────────────────────────────────────────────────────────
+  if (weather) weather.update(dt);
 
-  // ── Collision: stop spreader/container passing through surfaces ────────────
-  {
-    const sp = crane.getSpreaderWorldPos();
-    let minSpreaderY;
+  // ── Ship bobbing + departure/arrival ─────────────────────────────────────
+  const shipStatus = updateShip(activeShip, dt);
 
-    if (heldContainer) {
-      // Container hangs from spreader — its bottom must stay above the floor
-      const sz = containerSize(heldContainer.userData.is40ft);
-      const floor = getFloorBelow(sp.x, sp.z, heldContainer.userData.containerId);
-      minSpreaderY = floor + sz.h + 0.05;  // spreader must be one container-height above floor
-    } else {
-      // Bare spreader — its underside must not penetrate surfaces
-      const floor = getFloorBelow(sp.x, sp.z);
-      minSpreaderY = floor + 0.2;           // 0.2m clearance under spreader bar
-    }
-
-    // spreaderWorldY = TROLLEY_WORLD_Y - hoistHeight
-    // To keep spreaderY >= minSpreaderY:  hoistHeight <= TROLLEY_WORLD_Y - minSpreaderY
-    const maxHoist = TROLLEY_WORLD_Y - minSpreaderY;
-    if (crane.hoistHeight > maxHoist) {
-      crane.hoistHeight = maxHoist;
-      crane.refreshSpreaderPos(physics);    // re-apply transforms immediately
+  // Sync containers still on the active ship to the ship's bobbing Y
+  for (const c of allContainers) {
+    if (c.userData.onShip === activeShip.def.id &&
+        c.userData.inShipSlot === true &&
+        !c.userData.attached &&
+        !fallingContainers.has(c)) {
+      c.position.y = c.userData.originalY + activeShip.bobY;
     }
   }
 
-  // ── Container–truck impact detection ──────────────────────────────────────
+  if (shipStatus === 'departed') {
+    arriveNextShip();
+  }
+
+  if (shipStatus === 'arrived') {
+    spawnForShip(activeShip);
+    updateShipStateUI('AT BERTH');
+  }
+
+  // Check if active ship is empty and should depart
+  shipStateTimer -= dt;
+  if (activeShip.phase === 'berth' && shipStateTimer <= 0 && !shipDepartPending) {
+    shipStateTimer = 2; // check every 2 seconds
+    if (isShipEmpty() && allContainers.some(c => c.userData.onShip === activeShip.def.id)) {
+      shipDepartPending = true;
+      setTimeout(() => {
+        startShipDeparture();
+        shipDepartPending = false;
+      }, 2000); // 2s pause before sailing away
+    }
+  }
+
+  // ── Crane movement ────────────────────────────────────────────────────────
+  crane.update(dt, controls, physics);
+
+  // ── Wind nudges pendulum ──────────────────────────────────────────────────
+  if (weather) {
+    physics.applyImpulse(weather.wind.x * 0.0006 * dt, weather.wind.z * 0.0006 * dt);
+  }
+
+  // ── Collision: spreader can't pass through surfaces ───────────────────────
+  {
+    const sp = crane.getSpreaderWorldPos();
+    let minSpreaderY;
+    if (heldContainer) {
+      const sz  = containerSize(heldContainer.userData.is40ft);
+      const floor = getFloorBelow(sp.x, sp.z, heldContainer.userData.containerId);
+      minSpreaderY = floor + sz.h + 0.05;
+    } else {
+      const floor = getFloorBelow(sp.x, sp.z);
+      minSpreaderY = floor + 0.2;
+    }
+    const maxHoist = TROLLEY_WORLD_Y - minSpreaderY;
+    if (crane.hoistHeight > maxHoist) {
+      crane.hoistHeight = maxHoist;
+      crane.refreshSpreaderPos(physics);
+    }
+  }
+
+  // ── Container–truck impact detection ─────────────────────────────────────
   if (heldContainer) {
     const sp  = crane.getSpreaderWorldPos();
     const sz  = containerSize(heldContainer.userData.is40ft);
     const containerBottomY = sp.y - sz.h;
-    const truckBelow = getActiveTruckBelow(sp.x, sp.z);
+    const truckBelow = getActiveTruckBelow(sp.x, sp.z, heldContainer.userData.is40ft);
     const nowOnTruck = truckBelow !== null && containerBottomY <= TRUCK_FLATBED_TOP + 0.08;
 
     if (nowOnTruck && !containerOnTruck) {
-      // First contact this approach — calculate impact
       const descentSpeed = lastSpreaderY !== null
         ? Math.max(0, (lastSpreaderY - sp.y) / dt)
         : 0;
-
-      const speedFactor  = Math.min(descentSpeed / 4.0, 1.0); // 4 m/s = full speed
-      // Offset from ideal flatbed centre
-      const idealX = truckBelow.position.x - 1.5;
+      const speedFactor  = Math.min(descentSpeed / 4.0, 1.0);
+      const fo     = truckBelow.userData.flatbedOffset;
+      const idealX = truckBelow.position.x + fo;
       const idealZ = truckBelow.position.z;
-      const offsetDist  = Math.sqrt((sp.x - idealX) ** 2 + (sp.z - idealZ) ** 2);
+      const offsetDist   = Math.sqrt((sp.x - idealX) ** 2 + (sp.z - idealZ) ** 2);
       const offsetFactor = Math.min(offsetDist / 5.0, 1.0);
-
-      // Damage: 0–45% per hit; hard slam off-centre ≈ 45%, gentle centred ≈ near 0%
       const impactDamage = (speedFactor * 0.65 + offsetFactor * 0.35) * 0.45;
 
       if (impactDamage > 0.02) {
@@ -434,7 +510,6 @@ function loop() {
         ui.updateDamage(currentDamage);
         sounds.playCrash(speedFactor);
         trucks.shakeTruck(truckBelow, speedFactor);
-
         if (currentDamage >= 1.0) triggerGameOver();
       }
     }
@@ -442,7 +517,7 @@ function loop() {
     lastSpreaderY    = sp.y;
   }
 
-  // Camera
+  // ── Camera ────────────────────────────────────────────────────────────────
   controls.consumeMouseDelta();
   const cabinPos = crane.getCameraPosition();
   camera.position.copy(cabinPos);
@@ -453,11 +528,11 @@ function loop() {
   );
   camera.lookAt(cabinPos.clone().add(lookDir));
 
-  // Physics
+  // ── Physics ───────────────────────────────────────────────────────────────
   const trolleyPos = crane.getTrolleyWorldPos();
   physics.update(dt, trolleyPos.x, trolleyPos.z, crane.hoistHeight);
 
-  // Move held container
+  // ── Move held container ───────────────────────────────────────────────────
   if (heldContainer) {
     const sp = crane.getSpreaderWorldPos();
     const sz = containerSize(heldContainer.userData.is40ft);
@@ -466,31 +541,45 @@ function loop() {
     heldContainer.rotation.z = physics.pendulum.angleZ * 0.25;
   }
 
-  // Gravity
+  // ── Gravity ───────────────────────────────────────────────────────────────
   updateFalling(dt);
 
-  // Trucks
+  // ── Trucks ────────────────────────────────────────────────────────────────
   trucks.update(dt);
 
-  // Laser guide
+  // ── Laser guide ───────────────────────────────────────────────────────────
   {
     const sp = crane.getSpreaderWorldPos();
-    const floorY = getFloorBelow(sp.x, sp.z, heldContainer ? heldContainer.userData.containerId : null);
-    const truckHit = trucks.findNearby(sp);
-    const quality = truckHit ? truckHit.quality : 'none';
+    const skipId = heldContainer ? heldContainer.userData.containerId : null;
+    const floorY = getFloorBelow(sp.x, sp.z, skipId);
+    const is40ft = heldContainer?.userData.is40ft ?? false;
+
+    // Quality: check truck proximity first, then container proximity
+    let quality = 'none';
+    const truckHit = trucks.findNearby(sp, is40ft);
+    if (truckHit) {
+      quality = truckHit.quality;
+    } else if (!heldContainer) {
+      // No container held — colour laser by how close we are to picking one up
+      const nearest = findNearestContainer(sp);
+      if (nearest) {
+        const sz  = containerSize(nearest.userData.is40ft);
+        const top = nearest.position.y + sz.h / 2;
+        const d   = Math.sqrt((nearest.position.x - sp.x)**2 + (top - sp.y)**2 + (nearest.position.z - sp.z)**2);
+        quality = d < 1.5 ? 'perfect' : d < 2.5 ? 'good' : d < 4.0 ? 'near' : 'none';
+      }
+    }
     crane.updateLaser(sp.y, floorY, quality);
   }
 
-  // Ambient sound tick
+  // ── Sound motors ──────────────────────────────────────────────────────────
   sounds.tick(dt);
-
-  // Motor sounds
   const traveling  = controls.isDown('KeyA') || controls.isDown('KeyD');
   const trolleying = controls.isDown('KeyW') || controls.isDown('KeyS');
   const hoisting   = controls.isDown('KeyQ') || controls.isDown('KeyE');
   sounds.setMotors(traveling, trolleying, hoisting);
 
-  // Spacebar
+  // ── Spacebar: attach / release ────────────────────────────────────────────
   const spaceDown = controls.isDown('Space');
   if (spaceDown && !spaceWasDown) {
     if (!heldContainer) {
@@ -503,12 +592,12 @@ function loop() {
   }
   spaceWasDown = spaceDown;
 
-  // H key — help panel
+  // ── H key — help panel ────────────────────────────────────────────────────
   const hDown = controls.isDown('KeyH');
   if (hDown && !hWasDown) toggleHelp();
   hWasDown = hDown;
 
-  // HUD
+  // ── HUD update ────────────────────────────────────────────────────────────
   ui.updateCrane(crane.railPos, crane.trolleyPos, crane.hoistHeight);
   ui.updateSwing(physics.getSwingScore());
 
