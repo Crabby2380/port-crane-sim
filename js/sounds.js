@@ -138,11 +138,10 @@ export class SoundSystem {
     // 3. Wind / sea wash — low-pass filtered noise
     this._makeNoiseLayer(20, 400, 0.15, 0.018);
 
-    // 4. Rain layer — noise burst filtered to rainfall frequency range
+    // 4. Rain layer — noise filtered through dedicated gain (starts silent)
     this._rainGain = this.ctx.createGain();
     this._rainGain.gain.value = 0;
-    this._makeNoiseLayer(3200, 1200, 0.3, 1); // high-freq rain hiss — connected below
-    // Override: build dedicated rain source connected to _rainGain
+    // Build dedicated rain source connected to _rainGain only
     const rainLen = this.ctx.sampleRate * 3;
     const rainBuf = this.ctx.createBuffer(1, rainLen, this.ctx.sampleRate);
     const rainD   = rainBuf.getChannelData(0);
@@ -264,10 +263,10 @@ export class SoundSystem {
     if (!this.enabled) return;
     this._currentWeather = state;
     const t = this.ctx.currentTime;
-    const rainVol = state === 'rainy'  ? 0.045 : 0;
-    const windVol = state === 'windy'  ? 0.04
-                  : state === 'rainy'  ? 0.025
-                  : state === 'cloudy' ? 0.01
+    const rainVol = state === 'rainy'  ? 0.022 : 0;
+    const windVol = state === 'windy'  ? 0.018
+                  : state === 'rainy'  ? 0.012
+                  : state === 'cloudy' ? 0.004
                   : 0;
     this._rainGain.gain.setTargetAtTime(rainVol, t, 2.5);
     this._windGain.gain.setTargetAtTime(windVol, t, 2.5);

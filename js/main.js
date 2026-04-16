@@ -77,8 +77,8 @@ let containerOnTruck  = false;
 let lastSpreaderY     = null;
 
 // Ship departure state
-let shipDepartPending = false;  // waiting for check
-let shipStateTimer    = 0;      // cooldown before next check
+let shipDepartPending = false;
+let shipStateTimer    = 5;  // grace period before first empty-check
 
 // ── HUD helpers ───────────────────────────────────────────────────────────────
 function updateShipStateUI(txt) {
@@ -239,9 +239,9 @@ function removeFromYard(c) {
 
 // ── Ship unload detection ─────────────────────────────────────────────────────
 function isShipEmpty() {
-  // Ship is empty when no containers remain in a ship slot on the active ship
+  // Ship is empty when no containers remain physically on the ship deck
   return !allContainers.some(c =>
-    c.userData.onShip === activeShip.def.id && c.userData.inShipSlot === true
+    c.userData.onShip === activeShip.def.id && c.userData.onShipDeck === true
   );
 }
 
@@ -275,7 +275,9 @@ function attachContainer(c) {
     removeFromYard(c);
     c.userData.inYard = false;
   }
-  c.userData.attached = true;
+  // Picking up from ship deck — mark as no longer on deck
+  c.userData.onShipDeck = false;
+  c.userData.attached   = true;
   physics.isLoaded    = true;
   heldContainer       = c;
   ui.updateSpreader(true);
@@ -426,10 +428,10 @@ function loop() {
   // ── Ship bobbing + departure/arrival ─────────────────────────────────────
   const shipStatus = updateShip(activeShip, dt);
 
-  // Sync containers still on the active ship to the ship's bobbing Y
+  // Sync containers still physically on the ship deck to its bobbing Y
   for (const c of allContainers) {
-    if (c.userData.onShip === activeShip.def.id &&
-        c.userData.inShipSlot === true &&
+    if (c.userData.onShipDeck === true &&
+        c.userData.onShip === activeShip.def.id &&
         !c.userData.attached &&
         !fallingContainers.has(c)) {
       c.position.y = c.userData.originalY + activeShip.bobY;
@@ -443,6 +445,8 @@ function loop() {
   if (shipStatus === 'arrived') {
     spawnForShip(activeShip);
     updateShipStateUI('AT BERTH');
+    shipStateTimer    = 5;   // fresh grace period before departure check
+    shipDepartPending = false;
   }
 
   // Check if active ship is empty and should depart

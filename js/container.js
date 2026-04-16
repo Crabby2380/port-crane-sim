@@ -138,11 +138,15 @@ export function spawnContainersOnShip(shipObj, scene) {
 
     c.position.set(worldPos.x + slot.localX, wy, worldPos.z + slot.localZ);
 
-    // Mark origin for ship-bobbing sync and departure cleanup
+    // Mark origin for ship-bobbing sync and departure logic
     c.userData.originShip  = def.id;
     c.userData.originalY   = wy;
+    c.userData.originalX   = worldPos.x + slot.localX;
+    c.userData.originalZ   = worldPos.z + slot.localZ;
     c.userData.currentSlot = slot;
     c.userData.onShip      = def.id;
+    c.userData.onShipDeck  = true;   // still physically on the ship — cleared on pickup
+    c.userData.inShipSlot  = false;  // not yet placed back by crane
 
     slot.occupied    = true;
     slot.containerId = c.userData.containerId;
