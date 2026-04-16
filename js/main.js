@@ -238,14 +238,34 @@ function releaseContainer(spreaderPos) {
     return;
   }
 
-  // 2. Truck
-  const truck = trucks.findNearby(spreaderPos);
-  if (truck) {
-    trucks.loadContainer(truck, c);
+  // 2. Truck — with damage calculation
+  const truckHit = trucks.findNearby(spreaderPos);
+  if (truckHit) {
+    const { truck, dist, quality } = truckHit;
+
+    // Damage from positional offset (0=perfect, 1=destroyed)
+    const offsetDamage = Math.min(dist / 6.0, 1.0);
+    // Damage from swing (swingScore 1=steady → 0 swing damage)
+    const swingDamage  = 1 - swingScore;
+    const damage = offsetDamage * 0.65 + swingDamage * 0.35;
+
+    if (damage >= 0.9) {
+      // Container slides off — treat as drop penalty
+      sounds.playDropPenalty();
+      ui.addScore(-80, 'SLID OFF!');
+      fallingContainers.set(c, { vy: -2, targetY: null, snapX: null, snapZ: null });
+      physics.reset();
+      return;
+    }
+
+    trucks.loadContainer(truck, c, damage);
     c.userData.onTruck = true;
     sounds.playTruckLoaded();
-    const pts = Math.round(scorePlacement(swingScore, true) * 1.3);
-    ui.addScore(pts, 'TRUCK BONUS!');
+
+    // Score: 350 base × (1-damage) × quality bonus from swing steadiness
+    const baseScore = Math.round(350 * (1 - damage) * (0.5 + swingScore * 0.5));
+    const label = quality === 'perfect' ? 'PERFECT LOAD!' : quality === 'good' ? 'GOOD LOAD!' : 'TRUCK LOADED';
+    ui.addScore(baseScore, label);
     ui.containerPlaced();
     physics.reset();
     return;
@@ -283,7 +303,7 @@ function updateFalling(dt) {
     const sz     = containerSize(c.userData.is40ft);
     const floorY = state.targetY !== null
       ? state.targetY
-      : groundLevelAt() + sz.h / 2;
+      : getFloorBelow(c.position.x, c.position.z, c.userData.containerId) + sz.h / 2;
 
     if (c.position.y <= floorY) {
       c.position.y = floorY;
@@ -367,6 +387,15 @@ function loop() {
 
   // Trucks
   trucks.update(dt);
+
+  // Laser guide
+  {
+    const sp = crane.getSpreaderWorldPos();
+    const floorY = getFloorBelow(sp.x, sp.z, heldContainer ? heldContainer.userData.containerId : null);
+    const truckHit = trucks.findNearby(sp);
+    const quality = truckHit ? truckHit.quality : 'none';
+    crane.updateLaser(sp.y, floorY, quality);
+  }
 
   // Ambient sound tick
   sounds.tick(dt);

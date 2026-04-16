@@ -175,6 +175,40 @@ export class Crane {
     );
     this._statusLight.position.set(0, 0.4, 0);
     this._spreaderGroup.add(this._statusLight);
+
+    this._buildLaserGuide();
+  }
+
+  _buildLaserGuide() {
+    // 4 corner beams + 1 central beam projecting downward from spreader
+    const corners = [[-3.0, -1.15], [3.0, -1.15], [-3.0, 1.15], [3.0, 1.15], [0, 0]];
+    this._laserBeams = corners.map(([ox, oz]) => {
+      const radius = (ox === 0 && oz === 0) ? 0.04 : 0.025;
+      const geo = new THREE.CylinderGeometry(radius, radius, 1, 6);
+      const mat = new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.8 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.userData.ox = ox;
+      mesh.userData.oz = oz;
+      mesh.position.set(ox, -0.5, oz);
+      this._spreaderGroup.add(mesh);
+      return mesh;
+    });
+  }
+
+  updateLaser(spreaderWorldY, floorY, quality) {
+    if (!this._laserBeams) return;
+    const dist = Math.max(0.4, spreaderWorldY - floorY);
+    const color = quality === 'perfect' ? 0x00ff44
+                : quality === 'good'    ? 0xffff00
+                : quality === 'near'   ? 0xff8800
+                :                        0xff2200;
+    const opacity = quality === 'none' ? 0.3 : 0.82;
+    for (const mesh of this._laserBeams) {
+      mesh.scale.y = dist;
+      mesh.position.set(mesh.userData.ox, -dist / 2, mesh.userData.oz);
+      mesh.material.color.setHex(color);
+      mesh.material.opacity = opacity;
+    }
   }
 
 
