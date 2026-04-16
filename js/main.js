@@ -139,12 +139,13 @@ function getFloorBelow(worldX, worldZ, skipContainerId = null) {
     }
   }
 
-  // Ship deck — account for bobbing Y
-  const sp = new THREE.Vector3();
-  activeShip.mesh.getWorldPosition(sp);
-  if (Math.abs(worldX - sp.x) < activeShip.def.length / 2 &&
-      Math.abs(worldZ - sp.z) < activeShip.def.beam / 2) {
-    floor = Math.max(floor, sp.y + 0.4);
+  // Ship deck — use actual world position of ship mesh (includes bob + restY)
+  const shipWP = new THREE.Vector3();
+  activeShip.mesh.getWorldPosition(shipWP);
+  if (Math.abs(worldX - shipWP.x) < activeShip.def.length / 2 &&
+      Math.abs(worldZ - shipWP.z) < activeShip.def.beam / 2) {
+    // Deck surface is at ship localY ≈ 0.4 (deck mesh top)
+    floor = Math.max(floor, shipWP.y + 0.4);
   }
 
   // Truck flatbeds
@@ -261,8 +262,8 @@ function arriveNextShip() {
   // Reset slots
   for (const slot of activeShip.slots) { slot.occupied = false; slot.containerId = null; }
 
-  // Position new ship arriving from sea side (-X)
-  activeShip.mesh.position.set(activeShip.berthX - 180, 0, -12);
+  // Position new ship arriving from sea side (-X), at correct floating height
+  activeShip.mesh.position.set(activeShip.berthX - 180, activeShip.restY, -12);
   activeShip.mesh.rotation.z = 0;
   activeShip.phase  = 'arriving';
   activeShip.phaseT = 0;
@@ -428,13 +429,22 @@ function loop() {
   // ── Ship bobbing + departure/arrival ─────────────────────────────────────
   const shipStatus = updateShip(activeShip, dt);
 
-  // Sync containers still physically on the ship deck to its bobbing Y
-  for (const c of allContainers) {
-    if (c.userData.onShipDeck === true &&
-        c.userData.onShip === activeShip.def.id &&
-        !c.userData.attached &&
-        !fallingContainers.has(c)) {
-      c.position.y = c.userData.originalY + activeShip.bobY;
+  // Sync containers still physically on the ship deck — track ship bob exactly
+  if (activeShip.phase === 'berth' || activeShip.phase === 'departing' || activeShip.phase === 'arriving') {
+    const shipWP = new THREE.Vector3();
+    activeShip.mesh.getWorldPosition(shipWP);
+    for (const c of allContainers) {
+      if (c.userData.onShipDeck === true &&
+          c.userData.onShip === activeShip.def.id &&
+          !c.userData.attached &&
+          !fallingContainers.has(c)) {
+        // Lock container to ship in all three axes (handles X movement during departure)
+        c.position.set(
+          shipWP.x + c.userData.deckLocalX,
+          shipWP.y + c.userData.deckLocalY,
+          shipWP.z + c.userData.deckLocalZ
+        );
+      }
     }
   }
 

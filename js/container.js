@@ -138,15 +138,19 @@ export function spawnContainersOnShip(shipObj, scene) {
 
     c.position.set(worldPos.x + slot.localX, wy, worldPos.z + slot.localZ);
 
-    // Mark origin for ship-bobbing sync and departure logic
+    const sz = containerSize(use40ft);
+    // deckLocalY = Y of container centre relative to ship group pivot.
+    // Used each frame to sync container with ship bobbing:
+    //   container.position.y = ship.mesh.position.y + deckLocalY
+    c.userData.deckLocalY  = slot.localY + sz.h / 2;
+    c.userData.deckLocalX  = slot.localX;
+    c.userData.deckLocalZ  = slot.localZ;
+
     c.userData.originShip  = def.id;
-    c.userData.originalY   = wy;
-    c.userData.originalX   = worldPos.x + slot.localX;
-    c.userData.originalZ   = worldPos.z + slot.localZ;
     c.userData.currentSlot = slot;
     c.userData.onShip      = def.id;
-    c.userData.onShipDeck  = true;   // still physically on the ship — cleared on pickup
-    c.userData.inShipSlot  = false;  // not yet placed back by crane
+    c.userData.onShipDeck  = true;   // physically on ship deck — cleared on pickup
+    c.userData.inShipSlot  = false;  // set true only when crane places back onto a slot
 
     slot.occupied    = true;
     slot.containerId = c.userData.containerId;
