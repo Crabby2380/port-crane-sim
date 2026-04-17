@@ -258,13 +258,12 @@ export class TruckManager {
       });
     }
 
-    truck.userData.loaded      = true;
-    truck.userData.container   = container;
-    truck.userData.phase       = 'waiting';
-    truck.userData.departDelay = 1.8;
-    truck.userData.startX      = truck.position.x;
-    truck.userData.startZ      = truck.position.z;
-    truck.userData.turnT       = 0;
+    truck.userData.loaded         = true;
+    truck.userData.container      = container;
+    truck.userData.phase          = 'waiting';
+    truck.userData.departDelay    = 1.8;
+    truck.userData.forwardRemain  = 22;   // units to drive straight before turning
+    truck.userData.turnT          = 0;
   }
 
   // ── Trigger truck shake on container impact ───────────────────────────────
@@ -291,8 +290,23 @@ export class TruckManager {
 
       if (ud.phase === 'waiting') {
         ud.departDelay -= dt;
-        if (ud.departDelay <= 0) ud.phase = 'turning';
+        if (ud.departDelay <= 0) ud.phase = 'pullingforward';
         this._syncContainer(t);
+        continue;
+      }
+
+      // ── Drive straight forward (+X) to clear the bay before turning ────
+      if (ud.phase === 'pullingforward') {
+        t.position.x += DRIVE_SPD * dt;
+        ud.forwardRemain -= DRIVE_SPD * dt;
+        this._syncContainer(t);
+        if (ud.forwardRemain <= 0) {
+          // Anchor arc to the truck's current position
+          ud.startX = t.position.x;
+          ud.startZ = t.position.z;
+          ud.turnT  = 0;
+          ud.phase  = 'turning';
+        }
         continue;
       }
 
