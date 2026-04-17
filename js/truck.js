@@ -99,12 +99,12 @@ export class TruckManager {
     frontWheelGroup.position.set(frontAxleX, 0, 0);
     for (const z of [-1.6, 1.6]) {
       const w = new THREE.Mesh(wheelGeo, wheelMat);
-      w.rotation.z = Math.PI / 2;
+      w.rotation.x = Math.PI / 2;
       w.position.set(0, 0.55, z);
       w.castShadow = true;
       frontWheelGroup.add(w);
       const hub = new THREE.Mesh(hubGeo, hubMat);
-      hub.rotation.z = Math.PI / 2;
+      hub.rotation.x = Math.PI / 2;
       hub.position.set(0, 0.55, z);
       frontWheelGroup.add(hub);
     }
@@ -115,12 +115,12 @@ export class TruckManager {
     for (const ax of driveAxles) {
       for (const z of [-1.6, 1.6]) {
         const w = new THREE.Mesh(wheelGeo, wheelMat);
-        w.rotation.z = Math.PI / 2;
+        w.rotation.x = Math.PI / 2;
         w.position.set(ax, 0.55, z);
         w.castShadow = true;
         group.add(w);
         const hub = new THREE.Mesh(hubGeo, hubMat);
-        hub.rotation.z = Math.PI / 2;
+        hub.rotation.x = Math.PI / 2;
         hub.position.set(ax, 0.55, z);
         group.add(hub);
       }
