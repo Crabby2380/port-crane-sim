@@ -76,6 +76,10 @@ let currentDamage     = 0;
 let containerOnTruck  = false;
 let lastSpreaderY     = null;
 
+// Collision tracking — keys of surfaces currently touching the held container.
+// Damage only fires on the ONSET (key appears for the first time this contact).
+let prevCollisionSet = new Set();
+
 // Ship departure state
 let shipDepartPending = false;
 let shipStateTimer    = 5;  // grace period before first empty-check
@@ -178,16 +182,34 @@ function getActiveTruckBelow(worldX, worldZ, is40ft) {
 }
 
 function findNearestContainer(spreaderPos) {
-  let best = null, bestDist = 4.0;
+  // ── Strict corner-aligned pickup ──────────────────────────────────────────
+  // All four spreader twist-lock pins must be over the container's corner
+  // castings, which requires:
+  //   1. Low pendulum swing (spreader must not be tilted noticeably)
+  //   2. Spreader centre within ±0.55 m of container centre in X and Z
+  //      (pins are at ±3 / ±1.15; castings at ±d/2 / ±w/2 — tolerates <0.55 m offset)
+  //   3. Spreader almost touching the container top (within 0.38 m above)
+  const swingOK = Math.abs(physics.pendulum.angleX) < 0.12
+               && Math.abs(physics.pendulum.angleZ) < 0.12;
+  if (!swingOK) return null;   // too much swing — pins can't seat
+
+  let best = null, bestScore = Infinity;
   for (const c of allContainers) {
     if (c.userData.inShipSlot || c.userData.attached || fallingContainers.has(c)) continue;
     const sz   = containerSize(c.userData.is40ft);
     const topY = c.position.y + sz.h / 2;
-    const dx   = Math.abs(c.position.x - spreaderPos.x);
-    const dz   = Math.abs(c.position.z - spreaderPos.z);
-    const dy   = Math.abs(topY - spreaderPos.y);
-    const dist = Math.sqrt(dx*dx + dz*dz + dy*dy);
-    if (dist < bestDist) { bestDist = dist; best = c; }
+
+    // dy: how far spreader is above container top (must be nearly touching)
+    const dy = spreaderPos.y - topY;
+    if (dy < -0.05 || dy > 0.38) continue;   // too high, or spreader below top
+
+    // Horizontal alignment — spreader centre over container centre
+    const dx = Math.abs(c.position.x - spreaderPos.x);
+    const dz = Math.abs(c.position.z - spreaderPos.z);
+    if (dx > 0.55 || dz > 0.55) continue;    // pins won't reach corners
+
+    const score = dx + dz + dy * 2;           // combined alignment quality
+    if (score < bestScore) { bestScore = score; best = c; }
   }
   return best;
 }
@@ -304,6 +326,7 @@ function releaseContainer(spreaderPos) {
   heldContainer       = null;
   containerOnTruck    = false;
   lastSpreaderY       = null;
+  prevCollisionSet.clear();
   ui.updateSpreader(false);
   crane.setSpreaderLocked(false);
   c.rotation.set(0, 0, 0);
@@ -385,6 +408,131 @@ function triggerGameOver() {
   }
   ui.hideDamageBar();
   ui.showGameOver(ui.getScore());
+}
+
+// ── Container collision system ────────────────────────────────────────────────
+// Checks the held container's AABB each frame against every solid surface.
+// Damage is applied once per new contact (onset only), not every frame while touching.
+// Truck *flatbed-landing* is deliberately excluded — that's handled by the
+// impact-detection block above which already scales damage by speed + offset.
+function checkHeldContainerCollisions() {
+  if (!heldContainer) { prevCollisionSet.clear(); return; }
+
+  const c  = heldContainer;
+  const sz = containerSize(c.userData.is40ft);
+  // Container centre (set just above in the loop)
+  const cx = c.position.x, cy = c.position.y, cz = c.position.z;
+  const ehX = sz.d / 2, ehY = sz.h / 2, ehZ = sz.w / 2;
+
+  // Approximate container edge speed from pendulum (m/s at container body)
+  const spd = Math.sqrt(
+    (physics.pendulum.velX * physics.cableLength) ** 2 +
+    (physics.pendulum.velZ * physics.cableLength) ** 2
+  );
+
+  const newSet = new Set();
+
+  // Called the first time a given collision key appears this frame
+  const onNewContact = (key, intensity) => {
+    if (prevCollisionSet.has(key)) return;   // already in contact — no re-damage
+    const dmg = Math.min(intensity, 0.45);
+    if (dmg < 0.015) return;
+    currentDamage = Math.min(1.0, currentDamage + dmg);
+    ui.updateDamage(currentDamage);
+    ui.addScore(-Math.round(dmg * 160), 'COLLISION!');
+    sounds.playCrash(Math.min(intensity * 1.5, 1));
+    if (currentDamage >= 1.0) triggerGameOver();
+    // Bounce pendulum away from the surface
+    physics.applyImpulse(
+      -physics.pendulum.velX * 0.6,
+      -physics.pendulum.velZ * 0.6
+    );
+  };
+
+  // ── 1. Ground / port floor (y ≈ 0, not water) ───────────────────────────
+  // Water is at z < -5; the port floor is the solid quay (z > -5)
+  if (cy - ehY < 0.1 && cz > -5) {
+    const key = '__ground';
+    newSet.add(key);
+    onNewContact(key, 0.25 + spd * 0.08);
+    // Also clamp hoist to prevent penetration
+    crane.hoistHeight = Math.max(crane.hoistHeight, sz.h + 0.15);
+    crane.refreshSpreaderPos(physics);
+  }
+
+  // ── 2. Other containers (AABB vs AABB) ──────────────────────────────────
+  for (const other of allContainers) {
+    if (other === c || other.userData.attached || fallingContainers.has(other)) continue;
+    const osz = containerSize(other.userData.is40ft);
+    const ox = other.position.x, oy = other.position.y, oz = other.position.z;
+    if (Math.abs(cx - ox) < ehX + osz.d / 2 &&
+        Math.abs(cy - oy) < ehY + osz.h / 2 &&
+        Math.abs(cz - oz) < ehZ + osz.w / 2) {
+      const key = '__ctr' + other.userData.containerId;
+      newSet.add(key);
+      onNewContact(key, 0.18 + spd * 0.1);
+      // Push pendulum away from the other container
+      const dxo = cx - ox || 0.01, dzo = cz - oz || 0.01;
+      const len = Math.sqrt(dxo * dxo + dzo * dzo);
+      physics.applyImpulse(dxo / len * 0.005, dzo / len * 0.005);
+    }
+  }
+
+  // ── 3. Ship hull (treat as solid box from keel to deck) ─────────────────
+  {
+    const shipWP = new THREE.Vector3();
+    activeShip.mesh.getWorldPosition(shipWP);
+    const sHX   = activeShip.def.length / 2 + 2;   // include bow/stern wedges
+    const sHZ   = activeShip.def.beam / 2;
+    const sDeck = shipWP.y + 0.5;    // deck surface + small margin
+    const sKeel = shipWP.y - 9.5;
+
+    const inXZ = Math.abs(cx - shipWP.x) < ehX + sHX &&
+                 Math.abs(cz - shipWP.z) < ehZ + sHZ;
+
+    if (inXZ && cy - ehY < sDeck && cy + ehY > sKeel) {
+      // A container sitting ABOVE the deck in a valid slot is fine.
+      // Collision = any overlap where the container bottom dips below the deck.
+      if (cy - ehY < sDeck - 0.25) {
+        const key = '__ship';
+        newSet.add(key);
+        onNewContact(key, 0.22 + spd * 0.08);
+        // Nudge pendulum away from ship (which is at negative Z)
+        const pushZ = cz > shipWP.z ? 1 : -1;
+        physics.applyImpulse(0, pushZ * 0.006);
+      }
+    }
+  }
+
+  // ── 4. Truck bodies (sides / cab — flatbed landing excluded) ────────────
+  for (const t of trucks.trucks) {
+    if (t.userData.phase !== 'idle') continue;
+    const ud    = t.userData;
+    const fo    = ud.flatbedOffset;           // negative: behind hitch
+    const txCtr = t.position.x + fo;          // container-target X (= flatbed centre)
+    const tzCtr = t.position.z;
+    const halfW = ud.size === 'large' ? 7.5 : 4.5;
+
+    // Broad truck AABB (covers cab + trailer)
+    if (Math.abs(cx - txCtr) < ehX + halfW &&
+        cy - ehY < 3.6 && cy + ehY > 0.0   &&
+        Math.abs(cz - tzCtr) < ehZ + 1.6) {
+
+      // Exclude the intended flatbed-placement zone — the existing impact-detection
+      // block already handles damage for the container landing on the flatbed.
+      const nearFlatbed = cy - ehY <= TRUCK_FLATBED_TOP + 0.25 &&
+                          cy - ehY >= TRUCK_FLATBED_TOP - 1.0  &&
+                          Math.abs(cx - txCtr) < ehX + 3.0;
+      if (!nearFlatbed) {
+        const key = '__truck' + ud.initialHitchX.toFixed(0);
+        newSet.add(key);
+        onNewContact(key, 0.2 + spd * 0.09);
+        trucks.shakeTruck(t, Math.min(spd / 6, 1));
+      }
+    }
+  }
+
+  prevCollisionSet = newSet;
 }
 
 // ── Falling container gravity ─────────────────────────────────────────────────
@@ -554,6 +702,9 @@ function loop() {
     heldContainer.rotation.x = physics.pendulum.angleX * 0.25;
     heldContainer.rotation.z = physics.pendulum.angleZ * 0.25;
   }
+
+  // ── Container collision detection ─────────────────────────────────────────
+  checkHeldContainerCollisions();
 
   // ── Gravity ───────────────────────────────────────────────────────────────
   updateFalling(dt);
